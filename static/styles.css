@@ -316,14 +316,6 @@ button.upload-button:hover {
   left: 50%;       /* Center the image */
   transform: translate(-50%, 10px); /* Account for half of the image's width */
   z-index: 9999;   /* Make sure it's on top of other elements */
-  animation: wander 20s infinite ease-in-out;
-  
-}
-@keyframes wander {
-  0% { transform: translate(-50%, 10px); }
-  25% { transform: translate(-100%, 10px); }
-  75% { transform: translate(-0%, 10px); }
-  100% { transform: translate(-50%, 10px); }
 }
 
 .status-queue {

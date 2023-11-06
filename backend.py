@@ -43,6 +43,8 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
 
     emit('status', {'message': 'Starting conversion...', 'progress': 0}, broadcast=True)
 
+    packet_count = 0
+
     # Parse the messages and build the data structure
     while True:
         msg = mlog.recv_msg()
@@ -50,6 +52,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
             break
         msg_dict = msg.to_dict()
         packet_type = msg_dict.get('mavpackettype')
+        packet_count = packet_count + 1
         
         if packet_type in allowed_packet_types:
             instance = msg_dict.get('I', 0)
@@ -65,7 +68,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
             # Append the message dictionary to the list for its packet type and instance
             parsed_data[key].append(msg_dict)
 
-    emit('status', {'message': 'Total MAVLink messages parsed.', 'progress': 5}, broadcast=True)
+    emit('status', {'message': f'Total MAVLink packets: ({packet_count})', 'progress': 5}, broadcast=True)
 
     # Now create DataFrames in one go
     data_frames = {}
@@ -74,7 +77,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
         data_frames[key] = pd.DataFrame(data_list).drop(columns=['mavpackettype'], errors='ignore')
 
 
-    emit('status', {'message': 'Dataframes complete. Approximating GPS Time...', 'progress': 10}, broadcast=True)
+    emit('status', {'message': 'Approximating GPS Time...', 'progress': 10}, broadcast=True)
     # Add closest GPS time to each DataFrame
     gps_df = data_frames.get('GPS', pd.DataFrame())
     if not gps_df.empty:
@@ -104,7 +107,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     # Rename GPS columns to include "GPS_" prefix
     gps_columns_to_rename = {col: f"GPS_{col}" for col in all_df.columns if col != 'Unix_Epoch_Time'}
     all_df.rename(columns=gps_columns_to_rename, inplace=True)
-    emit('status', {'message': 'Starting to create the ALL table...', 'progress': 20}, broadcast=True)
+    emit('status', {'message': 'Importing Packets...', 'progress': 20}, broadcast=True)
     progress = 0
     # Append data in the specified order
     for packet_type in ordered_packet_types:
@@ -113,7 +116,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
         if packet_type not in data_frames:
             continue
         progress = progress + 1
-        emit('status', {'message': f'Importing packet type: {packet_type}...', 'progress': 22 + progress*4}, broadcast=True)
+        emit('status', {'message': f'Importing packet type: {packet_type}', 'progress': 22 + progress*4}, broadcast=True)
     
         df = data_frames[packet_type]
         avg_df = pd.DataFrame()
@@ -140,41 +143,13 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     reordered_columns = ['Unix_Epoch_Time'] + [col for col in all_df.columns if col != 'Unix_Epoch_Time']
     all_df = all_df[reordered_columns]
 
-    emit('status', {'message': 'Successfully created the ALL table. Writing to an Excel File...', 'progress': 90}, broadcast=True)
+    emit('status', {'message': 'Successfully imported all packets. Saving DataFrame...', 'progress': 95}, broadcast=True)
     # Save as Excel
     with pd.ExcelWriter(excel_file_path, engine='xlsxwriter') as writer:
         all_df.to_excel(writer, sheet_name='ALL', index=False)
         for packet_type, df in data_frames.items():
             reordered_columns = ['Unix_Epoch_Time'] + [col for col in df.columns if col != 'Unix_Epoch_Time']
             df[reordered_columns].to_excel(writer, sheet_name=packet_type, index=False)
-
-    # Load the workbook and select the 'ALL' sheet
-    # book = load_workbook(excel_file_path)
-    # sheet = book['ALL']
-
-    # Debugging: Print end_col_letter and len(all_df)
-    # end_col_letter = col_num_to_letter(len(all_df.columns))
-    # print("End Column Letter:", end_col_letter)
-    # print("Row Count:", len(all_df))
-
-    # Create a table
-    # table_range = f"A1:{end_col_letter}{len(all_df) + 1}"  # +1 due to the header row
-    # print("Table Range:", table_range)
-
-    # table = Table(displayName="DataTable", ref=table_range)
-
-    # emit('status', {'message': 'Styling ALL Table...', 'progress': 95}, broadcast=True)
-    # # Add a default style to the table
-    # style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False,
-    #                        showLastColumn=False, showRowStripes=True, showColumnStripes=True)
-    # table.tableStyleInfo = style
-
-    # Add table to the sheet
-    # sheet.add_table(table)
-
-    # emit('status', {'message': 'Conversion Complete! Finishing up...', 'progress': 95}, broadcast=True)
-    # Save the changes
-    # book.save(excel_file_path)
 
 # Function to load data from Excel
 def load_data_from_excel(file_path):
@@ -389,9 +364,24 @@ def export_data():
 
     file_path = os.path.join(DOWNLOAD_FOLDER, filename)
 
-    with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+    # Use xlsxwriter to create a new Excel file and add a worksheet
+    with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
         # Save the main filtered DataFrame
         filtered_df.to_excel(writer, sheet_name='ALL', index=False)
+
+        # Get the xlsxwriter workbook and worksheet objects
+        # workbook  = writer.book
+        worksheet = writer.sheets['ALL']
+
+        # Define a built-in table style with banded rows for a modern look
+        # Choose a style that suits your preference, e.g., 'Table Style Medium 9'
+        table_style = 'Table Style Medium 9'
+
+        # Add a table to the worksheet including the banded rows
+        worksheet.add_table(0, 0, len(filtered_df), len(filtered_df.columns) - 1, {
+            'style': table_style,
+            'columns': [{'header': column_name} for column_name in filtered_df.columns]
+        })
 
         # Read other sheets from original Excel and trim data based on start and end times
         if current_excel_file is None:
@@ -404,18 +394,6 @@ def export_data():
             sheet_df = pd.read_excel(current_excel_file, sheet_name=sheet_name)
             trimmed_df = trim_sheet_data(sheet_df, start_time_unix, end_time_unix)
             trimmed_df.to_excel(writer, sheet_name=sheet_name, index=False)
-    
-    # Add table formatting to the 'ALL' sheet
-    book = load_workbook(file_path)
-    sheet = book['ALL']
-    end_col_letter = col_num_to_letter(sheet.max_column)
-    table_range = f"A1:{end_col_letter}{sheet.max_row}"
-    table = Table(displayName="DataTable", ref=table_range)
-    style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False,
-                           showLastColumn=False, showRowStripes=True, showColumnStripes=True)
-    table.tableStyleInfo = style
-    sheet.add_table(table)
-    book.save(file_path)
 
     return send_file(file_path, as_attachment=True, download_name=filename)
 
