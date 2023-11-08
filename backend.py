@@ -5,7 +5,7 @@ from werkzeug.utils import secure_filename
 import os
 import re
 from bintoexcel import map_mode_number_to_name, calculate_unix_epoch_time_from_timeus, calculate_unix_epoch_time, fetch_weather_data, serialize_obj, match_and_append_weather_data
-import json
+import simplejson as json
 from collections import defaultdict
 from pymavlink import mavutil
   # Replace "your_module" with the actual module name
@@ -35,7 +35,7 @@ df = pd.DataFrame()
 current_excel_file = None
 
 def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
-    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE"]
+    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "PSCN", "PSCE", "PSCD"]
     mlog = mavutil.mavlink_connection(bin_file_path)
 
     # Create a dictionary to hold lists for each allowed packet type and instance
@@ -102,7 +102,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     # Define the desired order of appending packet types to the "ALL" table
     ordered_packet_types = ["GPS", "RATE", "RCIN", "RCOU", "VIBE_0", "VIBE_1", "HELI",
                             "IMU_0", "IMU_1", "POWR", "MCU", "BAT", "MAG_0", "MAG_1", 
-                            "BARO", "ATT", "GPA"]
+                            "BARO", "ATT", "GPA", "PSCN", "PSCE", "PSCD"]
 
     # Rename GPS columns to include "GPS_" prefix
     gps_columns_to_rename = {col: f"GPS_{col}" for col in all_df.columns if col != 'Unix_Epoch_Time'}
@@ -125,7 +125,12 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
             min_time = gps_time - time_window
             max_time = gps_time + time_window
             close_rows = df[(df['Unix_Epoch_Time'] >= min_time) & (df['Unix_Epoch_Time'] <= max_time)]
-            avg_row = close_rows.mean()
+            
+            if close_rows.empty:
+                avg_row = pd.Series({col: None for col in df.columns})
+            else:
+                avg_row = close_rows.mean()
+
             avg_row['Unix_Epoch_Time'] = gps_time
             avg_df = avg_df._append(avg_row, ignore_index=True)
 
@@ -290,7 +295,11 @@ def is_data_available():
 def get_data():
     if df.empty:
         return jsonify({'message': 'No data available'}), 404
-    return jsonify(df.to_dict(orient='records'))
+    # Use simplejson to handle NaN values
+    return app.response_class(
+        json.dumps(df.to_dict(orient='records'), ignore_nan=True),
+        mimetype='application/json'
+    )
 
 # Function to trim sheet data based on time range
 def trim_sheet_data(sheet_df, start_time_unix, end_time_unix, time_column_name='Unix_Epoch_Time'):

@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Destroy existing timeline if it exists
         if (timeline) {
             timeline.destroy();
-            timeline = null;  // Nullify the timeline object
+            timeline = null;
         }
 
         // Reset all your chart data variables
@@ -66,8 +66,6 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.available) {
                 fetchDataAndInit();  // Fetch data initially
-            } else {
-                // alert("No data is currently available. Please upload a file.");
             }
         })
         .catch(error => {
@@ -157,7 +155,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return response.json();
         })
         .then(data => {
-            // console.log("Fetched Data:", data);  // Log the fetched data
+            console.log("Fetched Data:", data);  // Log the fetched data
             processData(data);
             initVisualizations();
     
@@ -269,47 +267,6 @@ function appendStatusMessage(message, type = 'default') {
         }
     });
     
-    // // Upload data and refresh charts when a file is selected
-    // document.getElementById('csvFile').addEventListener('change', function() {
-    //     const file = this.files[0];
-    //     const formData = new FormData();
-    //     formData.append('file', file);
-
-    //     // Show loading message if it's a .bin file
-    //     if (file.name.endsWith('.bin')) {
-    //         setLoading(true);
-    //     }
-
-    //     fetch('upload', {
-    //         method: 'POST',
-    //         body: formData
-    //     })
-    //     .then(response => {
-    //         // Hide loading message
-    //         setLoading(false);
-
-    //         if (response.status === 400) {
-    //             return response.json();
-    //         } else {
-    //             return null;
-    //         }
-    //     })
-    //     .then(data => {
-    //         if (data && data.message) {
-    //             alert(data.message);
-    //         }
-    //         resetCharts();
-    //         fetchDataAndInit();
-    //     })
-    //     .catch((error) => {
-    //         // Hide loading message
-    //         setLoading(false);
-            
-    //         console.error('Error:', error);
-    //     });
-    // });
-
-
     // Trigger the hidden file input when the "Upload" button is clicked
     document.getElementById('uploadBtn').addEventListener('click', function() {
         document.getElementById('csvFile').click();
@@ -470,9 +427,6 @@ function init3DChart() {
     Plotly.newPlot('dPlot', [trace], layout, { responsive: true });
 }
 
-// Ensure that convertPressureToFeet is defined in your script as shown in previous examples
-
-
 async function fetchModeTable() {
     try {
         const response = await fetch('/get_mode_table');
@@ -563,10 +517,8 @@ async function initTimeline() {
         }
     });
 
-    // Style the custom time markers
     styleCustomTimeMarkers();
     
-    // Initialize the time range display
     updateDisplayedTimeRange(timeLabels[0], timeLabels[timeLabels.length - 1]);
 
 }
@@ -595,7 +547,6 @@ function styleCustomTimeMarkers() {
         }
     }, 0);
 }
-
 
 // Update function with color coding for both 3D and time-series charts
 function updateColors(newTime, markerId) {
@@ -632,12 +583,17 @@ document.getElementById('downloadCsvBtn').addEventListener('click', function() {
         applyShakeAnimationIfNoTimeline();
         return;
     }
-    // You can prompt the user for a filename if you'd like
+    // Prompt the user for a filename
     const filename = prompt("Enter the filename for the exported data:", "filtered_data.csv");
     
     // If the user cancels the prompt, filename will be null
     if (filename === null) {
         return;
+    }
+    
+    // Ensure the filename ends with .xlsx
+    if (!filename.endsWith('.xlsx')) {
+        filename += '.xlsx';
     }
 
     fetch('data/csv', {
