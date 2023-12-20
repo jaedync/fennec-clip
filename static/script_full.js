@@ -199,11 +199,14 @@ function clearStatusMessages() {
 }
 
     // Function to append a new status message to the queue
-function appendStatusMessage(message, type = 'default') {
+function appendStatusMessage(message, type = 'default', color = '#5cb4b8') {
     const statusQueue = document.getElementById('statusQueue');
     const newStatus = document.createElement('div');
     newStatus.className = `status-message status-${type}`;
     newStatus.innerText = message;
+
+    // Set border-left color based on the provided color
+    newStatus.style.borderLeftColor = color;
 
     // Apply the fade-in animation
     newStatus.style.animation = 'slideFadeIn 0.5s forwards';
@@ -216,7 +219,7 @@ function appendStatusMessage(message, type = 'default') {
     }
 
     // Keep only four messages in the queue
-    while (statusQueue.childNodes.length > 4) {
+    while (statusQueue.childNodes.length > 8) {
         statusQueue.removeChild(statusQueue.lastChild);
     }
 }
@@ -225,7 +228,10 @@ function appendStatusMessage(message, type = 'default') {
     socket.on('status', function(data) {
         console.log(data.message);
         updateProgressBar(data.progress);
-        appendStatusMessage(data.message); // Append the received status message to the queue
+        // Check if the color is provided in the data, otherwise default to a standard color
+        var messageColor = data.color || '#5cb4b8'; // Default color
+        // Append the received status message to the queue with the specified color
+        appendStatusMessage(data.message, 'default', messageColor); // Use 'default' or another type as needed
         if (data.message === 'Conversion and upload complete') {
             
             // Hide loading message and spinner
@@ -577,51 +583,67 @@ function updateColors(newTime, markerId) {
 }, 100); // delay of 200 milliseconds
     
 }
-
 document.getElementById('downloadCsvBtn').addEventListener('click', function() {
     if (!timeline) {
         applyShakeAnimationIfNoTimeline();
         return;
     }
-    // Prompt the user for a filename
-    const filename = prompt("Enter the filename for the exported data:", "filtered_data.csv");
-    
-    // If the user cancels the prompt, filename will be null
-    if (filename === null) {
-        return;
-    }
-    
-    // Ensure the filename ends with .xlsx
-    if (!filename.endsWith('.xlsx')) {
-        filename += '.xlsx';
-    }
 
-    fetch('data/csv', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ filename: filename }) // Send the filename as JSON
-    })
-    .then(response => {
-        if (response.ok) {
-            return response.blob();  // convert to blob
-        } else {
-            return response.json().then(data => Promise.reject(data));  // reject the Promise with the error message
+    // Get custom time markers
+    const startMarkerTime = timeline.getCustomTime('startMarker');
+    const endMarkerTime = timeline.getCustomTime('endMarker');
+
+    // Check for null or undefined
+    if (startMarkerTime && endMarkerTime) {
+        const startRange = new Date(startMarkerTime);
+        const endRange = new Date(endMarkerTime);
+
+        // Prompt the user for a filename
+        let filename = prompt("Enter the filename for the exported data:", "filtered_data.csv");
+
+        // If the user cancels the prompt, filename will be null
+        if (filename === null) {
+            return;
         }
-    })
-    .then(blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;  // Use the filename provided by the user
-        a.click();
-        window.URL.revokeObjectURL(url);
-    })
-    .catch(error => {
-        console.error(error);
-        alert("Failed to download CSV");
-    });
+
+        // Ensure the filename ends with .csv
+        if (!filename.endsWith('.csv')) {
+            filename += '.csv';
+        }
+
+        fetch('data/csv', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 
+                start_time: startRange.toISOString(), 
+                end_time: endRange.toISOString(), 
+                filename: filename 
+            }) // Send the start and end times along with the filename
+        })
+        .then(response => {
+            if (response.ok) {
+                return response.blob();  // convert to blob
+            } else {
+                return response.json().then(data => Promise.reject(data));  // reject the Promise with the error message
+            }
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;  // Use the filename provided by the user
+            a.click();
+            window.URL.revokeObjectURL(url);
+        })
+        .catch(error => {
+            console.error(error);
+            alert("Failed to download CSV");
+        });
+    } else {
+        console.error('Start or end marker time not found');
+    }
 });
 
 // Function to average data points

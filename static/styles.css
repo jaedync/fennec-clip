@@ -320,8 +320,8 @@ button.upload-button:hover {
 
 .status-queue {
   position: relative;
-  height: 210px;
-  min-width: 800px;
+  height: 420px;
+  min-width: 600px;
   padding: 10px;
   backdrop-filter: blur(20px);
   background: #09498534;
@@ -335,7 +335,8 @@ button.upload-button:hover {
   padding: 10px;
   margin-bottom: 5px;
   background: #404448; /* Slightly darker slate blue background for contrast */
-  border-left: 4px solid #5cb4b8; /* Color indicator on the side */
+  /* border-left: 4px solid #5cb4b8; Color indicator on the side */
+  border-left: 4px solid; /* No color specified here */
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
   border-radius: 3px;
   opacity: 0; /* Start fully transparent */

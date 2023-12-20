@@ -6,7 +6,7 @@ import os
 import re
 from bintoexcel import map_mode_number_to_name, calculate_unix_epoch_time_from_timeus, calculate_unix_epoch_time, fetch_weather_data, serialize_obj, match_and_append_weather_data
 import simplejson as json
-from collections import defaultdict
+from collections import defaultdict,  Counter
 from pymavlink import mavutil
   # Replace "your_module" with the actual module name
 from openpyxl import load_workbook
@@ -14,13 +14,15 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from flask_socketio import SocketIO, emit
 import base64
 import time
-
+import uuid
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 UPLOAD_FOLDER = 'uploads'
 DOWNLOAD_FOLDER = 'downloads'
+# Global variable to store the path of the current JSON file
+current_json_file = None
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
@@ -35,15 +37,18 @@ df = pd.DataFrame()
 current_excel_file = None
 
 def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
-    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "PSCN", "PSCE", "PSCD"]
+    # allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "PSCN", "PSCE", "PSCD"]
+    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE"]
     mlog = mavutil.mavlink_connection(bin_file_path)
 
     # Create a dictionary to hold lists for each allowed packet type and instance
     parsed_data = defaultdict(list)
 
-    emit('status', {'message': 'Starting conversion...', 'progress': 0}, broadcast=True)
+    emit('status', {'message': 'Starting conversion...', 'progress': 0, 'color': '#FFD700'}, broadcast=True)
 
     packet_count = 0
+    packet_type_counter = Counter()  # For detailed packet type counts
+    batch_size = 50000  # Update the progress every 50000 packets
 
     # Parse the messages and build the data structure
     while True:
@@ -68,7 +73,25 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
             # Append the message dictionary to the list for its packet type and instance
             parsed_data[key].append(msg_dict)
 
-    emit('status', {'message': f'Total MAVLink packets: ({packet_count})', 'progress': 5}, broadcast=True)
+        # Emit progress in batches
+        if packet_count % batch_size == 0:
+            # Calculate and emit progress
+            progress_percentage = "{:.2f}".format(mlog.percent)
+            # Check if packet_count is in millions
+            if packet_count >= 1000000:
+                # Format count in millions with one decimal place
+                packet_count_formatted = "{:.2f}m".format(packet_count / 1000000)
+            else:
+                # Format count in thousands with comma for every three digits
+                packet_count_formatted = "{:,}k".format(int(packet_count / 1000))
+
+            emit('status', {
+                'message': f'Imported {packet_count_formatted} packets... ({progress_percentage}%)',
+                'packet_types': dict(packet_type_counter),
+                'progress': 2,
+                'color': '#1E90FF'
+            }, broadcast=True)
+    emit('status', {'message': f'Total MAVLink packets imported: {packet_count:,}!', 'progress': 7, 'color': '#32CD32'}, broadcast=True)
 
     # Now create DataFrames in one go
     data_frames = {}
@@ -77,7 +100,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
         data_frames[key] = pd.DataFrame(data_list).drop(columns=['mavpackettype'], errors='ignore')
 
 
-    emit('status', {'message': 'Approximating GPS Time...', 'progress': 10}, broadcast=True)
+    # emit('status', {'message': 'Approximating GPS Time...', 'progress': 10}, broadcast=True)
     # Add closest GPS time to each DataFrame
     gps_df = data_frames.get('GPS', pd.DataFrame())
     if not gps_df.empty:
@@ -89,7 +112,7 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
                 lambda x: calculate_unix_epoch_time_from_timeus(x, initial_unix_epoch_time, initial_time_us)
             )
 
-    emit('status', {'message': 'Fetching Weather Data...', 'progress': 15}, broadcast=True)
+    emit('status', {'message': 'Fetching Weather Data...', 'progress': 15, 'color': '#9370DB'}, broadcast=True)
     # Fetch Weather Data
     min_time = gps_df['Unix_Epoch_Time'].min() if not gps_df.empty else None
     max_time = gps_df['Unix_Epoch_Time'].max() + 900 if not gps_df.empty else None
@@ -102,12 +125,13 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     # Define the desired order of appending packet types to the "ALL" table
     ordered_packet_types = ["GPS", "RATE", "RCIN", "RCOU", "VIBE_0", "VIBE_1", "HELI",
                             "IMU_0", "IMU_1", "POWR", "MCU", "BAT", "MAG_0", "MAG_1", 
-                            "BARO", "ATT", "GPA", "PSCN", "PSCE", "PSCD"]
+                            # "BARO", "ATT", "GPA", "PSCN", "PSCE", "PSCD"]
+                            "BARO", "ATT", "GPA"]
 
     # Rename GPS columns to include "GPS_" prefix
     gps_columns_to_rename = {col: f"GPS_{col}" for col in all_df.columns if col != 'Unix_Epoch_Time'}
     all_df.rename(columns=gps_columns_to_rename, inplace=True)
-    emit('status', {'message': 'Importing Packets...', 'progress': 20}, broadcast=True)
+    emit('status', {'message': 'Processing Packets...', 'progress': 20, 'color': '#FFA500'}, broadcast=True)
     progress = 0
     # Append data in the specified order
     for packet_type in ordered_packet_types:
@@ -116,9 +140,10 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
         if packet_type not in data_frames:
             continue
         progress = progress + 1
-        emit('status', {'message': f'Importing packet type: {packet_type}', 'progress': 22 + progress*4}, broadcast=True)
+        # emit('status', {'message': f'Handling packet type: {packet_type}', 'progress': 22 + progress*4}, broadcast=True)
     
         df = data_frames[packet_type]
+        total_packets = len(df)  # Counting the total number of packets for the current packet type
         avg_df = pd.DataFrame()
         
         for gps_time in all_df['Unix_Epoch_Time']:
@@ -132,7 +157,9 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
                 avg_row = close_rows.mean()
 
             avg_row['Unix_Epoch_Time'] = gps_time
-            avg_df = avg_df._append(avg_row, ignore_index=True)
+            # Filter out empty or all-NA rows
+            if not avg_row.isna().all():
+                avg_df = avg_df._append(avg_row, ignore_index=True)
 
         # Rename columns to include source table
         renamed_columns = {col: f"{packet_type}_{col}" for col in df.columns if col != 'Unix_Epoch_Time'}
@@ -140,6 +167,9 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
         
         all_df = pd.merge(all_df, avg_df, on='Unix_Epoch_Time', how='left')
 
+        # Emitting the total packet count for each packet type
+        emit('status', {'message': f'Processed {total_packets:,} {packet_type} packets.', 
+                        'progress': 22 + progress*4, 'color': '#FFD700'}, broadcast=True)
     # Append weather data to the "ALL" table
     if weather_data:
         all_df = match_and_append_weather_data(all_df, weather_data)
@@ -148,13 +178,25 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     reordered_columns = ['Unix_Epoch_Time'] + [col for col in all_df.columns if col != 'Unix_Epoch_Time']
     all_df = all_df[reordered_columns]
 
-    emit('status', {'message': 'Successfully imported all packets. Saving DataFrame...', 'progress': 95}, broadcast=True)
+    emit('status', {'message': 'Successfully processed all packets! Saving DataFrame...', 'progress': 95, 'color': '#20B2AA'}, broadcast=True)
     # Save as Excel
-    with pd.ExcelWriter(excel_file_path, engine='xlsxwriter') as writer:
-        all_df.to_excel(writer, sheet_name='ALL', index=False)
-        for packet_type, df in data_frames.items():
-            reordered_columns = ['Unix_Epoch_Time'] + [col for col in df.columns if col != 'Unix_Epoch_Time']
-            df[reordered_columns].to_excel(writer, sheet_name=packet_type, index=False)
+    # with pd.ExcelWriter(excel_file_path, engine='xlsxwriter') as writer:
+    #     all_df.to_excel(writer, sheet_name='ALL', index=False)
+    #     for packet_type, df in data_frames.items():
+    #         reordered_columns = ['Unix_Epoch_Time'] + [col for col in df.columns if col != 'Unix_Epoch_Time']
+    #         df[reordered_columns].to_excel(writer, sheet_name=packet_type, index=False)
+
+def save_df_to_json(df):
+    global current_json_file
+    # Generate a unique filename
+    filename = f"{uuid.uuid4()}.json"
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+
+    # Convert DataFrame to JSON and save to the file
+    with open(file_path, 'w') as f:
+        json.dump(df.to_dict(orient='records'), f, ignore_nan=True)
+
+    current_json_file = file_path
 
 # Function to load data from Excel
 def load_data_from_excel(file_path):
@@ -173,6 +215,8 @@ def load_data_from_excel(file_path):
 
         df['Datetime_Chicago'] = pd.to_datetime(df['Unix_Epoch_Time'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/Chicago')
         df['Datetime_Chicago'] = df['Datetime_Chicago'].astype(str)
+
+        save_df_to_json(df)
         
         return "File uploaded and data refreshed", 200
     except Exception as e:
@@ -197,6 +241,8 @@ def load_data(file_path):
         # Existing code to convert Unix time etc...
         df['Datetime_Chicago'] = pd.to_datetime(df['Unix_Epoch_Time'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/Chicago')
         df['Datetime_Chicago'] = df['Datetime_Chicago'].astype(str)
+        
+        save_df_to_json(df)
         
         return "File uploaded and data refreshed", 200
     except Exception as e:
@@ -293,13 +339,33 @@ def is_data_available():
 
 @app.route('/data', methods=['GET'])
 def get_data():
-    if df.empty:
+    if current_json_file is None or not os.path.exists(current_json_file):
         return jsonify({'message': 'No data available'}), 404
-    # Use simplejson to handle NaN values
-    return app.response_class(
-        json.dumps(df.to_dict(orient='records'), ignore_nan=True),
-        mimetype='application/json'
-    )
+
+    return send_file(current_json_file, as_attachment=True, download_name='data.json', mimetype='application/json')
+    
+@app.route('/speedtest', methods=['GET'])
+def speedtest():
+    # Generate a fixed size of data, e.g., 10 MB
+    data_size_mb = 10
+    data = 'A' * data_size_mb * 1024 * 1024  # 1 MB = 1024 * 1024 bytes
+
+    start_time = time.time()
+    response = Response(data, mimetype='text/plain')
+    end_time = time.time()
+
+    transfer_time = end_time - start_time
+    transfer_rate_mbps = (data_size_mb / transfer_time) * 8  # Convert MB/s to Mbps
+
+    # Print transfer time and rate to the console
+    print(f"Transfer Time: {transfer_time:.2f} seconds")
+    print(f"Transfer Rate: {transfer_rate_mbps:.2f} Mbps")
+
+    # Optionally, include these values in the response headers
+    response.headers['X-Transfer-Time'] = str(transfer_time)
+    response.headers['X-Transfer-Rate-Mbps'] = str(transfer_rate_mbps)
+
+    return response
 
 # Function to trim sheet data based on time range
 def trim_sheet_data(sheet_df, start_time_unix, end_time_unix, time_column_name='Unix_Epoch_Time'):
@@ -332,19 +398,32 @@ def get_data_as_csv():
         return jsonify({'message': 'No data available'}), 404
 
     data = request.json
-    raw_filename = data.get('filename', 'ALL.csv')  # Get filename from the client, use "ALL.csv" as default
-    filename = sanitize_filename(raw_filename)  # Sanitize the filename
+    start_time = data['start_time']
+    end_time = data['end_time']
 
-    # Make sure the sanitized filename ends with .csv
+    raw_filename = data.get('filename', 'filtered_data.csv')
+    filename = sanitize_filename(raw_filename)
+    
+    # Ensure the filename ends with .csv
     if not filename.endswith('.csv'):
         filename += '.csv'
 
-    csv_str = df.to_csv(index=False)
+    start_time_unix = pd.to_datetime(start_time).timestamp()
+    end_time_unix = pd.to_datetime(end_time).timestamp()
+
+    # Filter the DataFrame based on start and end times
+    filtered_df = df[(df['Unix_Epoch_Time'] >= start_time_unix) & (df['Unix_Epoch_Time'] <= end_time_unix)]
+
+    if len(filtered_df) == 0:
+        return jsonify({'message': 'Filtered data is empty, no CSV generated'}), 404
+
+    csv_str = filtered_df.to_csv(index=False)
     return Response(
         csv_str,
         mimetype="text/csv",
         headers={"Content-disposition": f"attachment; filename={filename}"}
     )
+
 
 @app.route('/export', methods=['POST'])
 def export_data():
