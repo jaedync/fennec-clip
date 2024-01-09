@@ -15,6 +15,8 @@ from flask_socketio import SocketIO, emit
 import base64
 import time
 import uuid
+import math
+
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -36,9 +38,101 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 df = pd.DataFrame()
 current_excel_file = None
 
+from math import radians, cos, sin, asin, sqrt
+
+def haversine_distance(lat1, lon1, lat2, lon2, axis):
+    """
+    Calculate the north-south (axis='lat') or east-west (axis='lng') 
+    great circle distance in meters between two points on the earth.
+    """
+    # Convert decimal degrees to radians
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+
+    # Differences in coordinates
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    # Haversine formula components
+    a_lat = sin(dlat/2)**2
+    a_lon = cos(lat1) * cos(lat2) * sin(dlon/2)**2
+
+    if axis == 'lat':
+        a = a_lat
+    elif axis == 'lng':
+        a = a_lon
+    else:
+        raise ValueError("Axis must be 'lat' or 'lng'")
+
+    c = 2 * asin(sqrt(a))
+
+    # Radius of Earth in kilometers is 6371. Convert to meters by multiplying by 1000
+    distance_in_meters = 6371 * c * 1000
+    return distance_in_meters
+
+def normalize_gps_data(gps_df):
+    """
+    Append distinct lat_m and lng_m columns to the GPS DataFrame.
+    """
+    ref_lat, ref_lon = gps_df.iloc[0]['Lat'], gps_df.iloc[0]['Lng']
+    
+    # Calculate north-south distance (latitude difference)
+    gps_df['lat_m'] = gps_df.apply(lambda row: haversine_distance(ref_lat, ref_lon, row['Lat'], ref_lon, 'lat'), axis=1)
+
+    # Calculate east-west distance (longitude difference)
+    gps_df['lng_m'] = gps_df.apply(lambda row: haversine_distance(ref_lat, ref_lon, ref_lat, row['Lng'], 'lng'), axis=1)
+    
+    return gps_df
+
+def convert_pressure_to_meters(pressure_in_pascals, temperature_celsius=None):
+    """
+    Convert pressure from Pascals to altitude in meters using the barometric formula.
+    If temperature_celsius is None or not provided, defaults to 15 degrees Celsius (ISA standard conditions at sea level).
+    """
+    # Default to ISA standard sea level temperature if temperature is None or not provided
+    temperature_celsius = 15 if temperature_celsius is None else temperature_celsius
+
+    pressure_in_millibars = pressure_in_pascals / 100
+    sea_level_pressure = 1013.25  # ISA standard sea level pressure in millibars
+    
+    # Convert temperature to Kelvin
+    temperature_kelvin = temperature_celsius + 273.15
+
+    # Constants
+    R = 8.314462618  # Universal gas constant in J/(mol·K)
+    g = 9.80665  # Acceleration due to gravity in m/s^2
+    M = 0.0289644  # Molar mass of Earth's air in kg/mol
+
+    # Scale height calculation
+    H = R * temperature_kelvin / (g * M)
+
+    # Barometric formula
+    altitude = -H * math.log(pressure_in_millibars / sea_level_pressure)
+    return altitude
+
+def calculate_average_temperature(weather_data):
+    """
+    Calculate the average temperature from a list of weather data records.
+    
+    The function expects each record in the weather_data list to have a 'temp_avg' key with the temperature in Fahrenheit.
+    It calculates the average temperature in Celsius.
+    
+    :param weather_data: List of dictionaries, each containing weather data with a 'temp_avg' key in Fahrenheit.
+    :return: The average temperature in Celsius, or None if no valid data is found.
+    """
+    total_temp_celsius = 0
+    count = 0
+    for record in weather_data:
+        if 'temp_avg' in record:
+            # Convert temperature from Fahrenheit to Celsius
+            temp_celsius = (record['temp_avg'] - 32) * 5 / 9
+            total_temp_celsius += temp_celsius
+            count += 1
+
+    return total_temp_celsius / count if count > 0 else None
+
 def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     # allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "PSCN", "PSCE", "PSCD"]
-    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE"]
+    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "XKF1", "XKF5"]
     mlog = mavutil.mavlink_connection(bin_file_path)
 
     # Create a dictionary to hold lists for each allowed packet type and instance
@@ -116,8 +210,42 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     # Fetch Weather Data
     min_time = gps_df['Unix_Epoch_Time'].min() if not gps_df.empty else None
     max_time = gps_df['Unix_Epoch_Time'].max() + 900 if not gps_df.empty else None
-    weather_data, _ = fetch_weather_data(min_time, max_time) if min_time and max_time else ([], False)
+    # weather_data, _ = fetch_weather_data(min_time, max_time) if min_time and max_time else ([], False)
     
+    # Fetching weather data and calculating average temperature
+    weather_data, success = fetch_weather_data(min_time, max_time) if min_time and max_time else ([], False)
+    avg_temperature_celsius = None
+    
+    if success and weather_data:
+        avg_temperature_celsius = calculate_average_temperature(weather_data)
+        if avg_temperature_celsius is not None:
+            print(f"Average Temperature: {avg_temperature_celsius} Celsius")
+        else:
+            print("Failed to calculate average temperature")
+    else:
+        print("Failed to fetch weather data or data is empty")
+
+
+    # Normalize GPS Data to latitude and longitude meters if GPS DataFrame exists
+    gps_df = data_frames.get('GPS')
+    if gps_df is not None:
+        gps_df = normalize_gps_data(gps_df)
+        data_frames['GPS'] = gps_df  # Update the GPS DataFrame in the dictionary
+
+    # Normalize barometric pressure to altitude meters if BARO DataFrame exists
+    baro_df = data_frames.get('BARO')
+    if baro_df is not None:
+        # Use the average temperature in the altitude calculation
+        baro_df['Altitude_Meters_Estimate'] = baro_df['Press'].apply(lambda x: convert_pressure_to_meters(x, avg_temperature_celsius))
+        
+        # Normalize the altitude to start at zero
+        if not baro_df['Altitude_Meters_Estimate'].empty:
+            initial_altitude = baro_df['Altitude_Meters_Estimate'].iloc[0]
+            baro_df['Altitude_Meters_Estimate'] -= initial_altitude
+
+        data_frames['BARO'] = baro_df  # Update the BARO DataFrame in the dictionary
+
+
     # Create the "ALL" table
     all_df = gps_df.copy()
     time_window = 0.2
@@ -126,7 +254,8 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     ordered_packet_types = ["GPS", "RATE", "RCIN", "RCOU", "VIBE_0", "VIBE_1", "HELI",
                             "IMU_0", "IMU_1", "POWR", "MCU", "BAT", "MAG_0", "MAG_1", 
                             # "BARO", "ATT", "GPA", "PSCN", "PSCE", "PSCD"]
-                            "BARO", "ATT", "GPA"]
+                            # "BARO", "ATT", "GPA"]
+                            "BARO", "ATT", "GPA", "XKF1", "XKF5"]
 
     # Rename GPS columns to include "GPS_" prefix
     gps_columns_to_rename = {col: f"GPS_{col}" for col in all_df.columns if col != 'Unix_Epoch_Time'}
@@ -179,12 +308,13 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     all_df = all_df[reordered_columns]
 
     emit('status', {'message': 'Successfully processed all packets! Saving DataFrame...', 'progress': 95, 'color': '#20B2AA'}, broadcast=True)
+    
     # Save as Excel
-    # with pd.ExcelWriter(excel_file_path, engine='xlsxwriter') as writer:
-    #     all_df.to_excel(writer, sheet_name='ALL', index=False)
-    #     for packet_type, df in data_frames.items():
-    #         reordered_columns = ['Unix_Epoch_Time'] + [col for col in df.columns if col != 'Unix_Epoch_Time']
-    #         df[reordered_columns].to_excel(writer, sheet_name=packet_type, index=False)
+    with pd.ExcelWriter(excel_file_path, engine='xlsxwriter') as writer:
+        all_df.to_excel(writer, sheet_name='ALL', index=False)
+        for packet_type, df in data_frames.items():
+            reordered_columns = ['Unix_Epoch_Time'] + [col for col in df.columns if col != 'Unix_Epoch_Time']
+            df[reordered_columns].to_excel(writer, sheet_name=packet_type, index=False)
 
 def save_df_to_json(df):
     global current_json_file

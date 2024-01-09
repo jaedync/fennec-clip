@@ -32,8 +32,11 @@ document.addEventListener('DOMContentLoaded', function() {
         // Reset all your chart data variables
         timeLabels = [];
         gpsDataLat = [];
+        gpsDataLatMeters = [];
         gpsDataLng = [];
+        gpsDataLngMeters = [];
         barometerData = [];
+        barometerDataMeters = [];
         imuDataX = [];
         imuDataY = [];
         imuDataZ = [];
@@ -288,8 +291,11 @@ function processData(data) {
     // Prepare data for the 3D chart
     timeLabels = data.map(row => new Date(row['Datetime_Chicago']));
     gpsDataLat = data.map(row => row['GPS_Lat']);
+    gpsDataLatMeters = data.map(row => row['GPS_lat_m']);
     gpsDataLng = data.map(row => row['GPS_Lng']);
+    gpsDataLngMeters = data.map(row => row['GPS_lng_m']);
     barometerData = data.map(row => row['BARO_Press']);
+    barometerDataMeters = data.map(row => row['BARO_Altitude_Meters_Estimate']);
     
     // Initialize IMU Data
     imuDataX = data.map(row => row['IMU_0_AccX']);
@@ -366,7 +372,7 @@ function normalizeGPSData(gpsDataLat, gpsDataLng) {
 }
 
 function init3DChart() {
-    if (!gpsDataLat || !gpsDataLng || !barometerData) {
+    if (!gpsDataLatMeters || !gpsDataLngMeters || !barometerDataMeters) {
         console.error("GPS or Barometer Data is undefined, null or empty");
         return;
     }
@@ -375,15 +381,12 @@ function init3DChart() {
         return;
     }
 
-    // Normalize GPS data to feet
-    const normalizedGPSData = normalizeGPSData(gpsDataLat, gpsDataLng);
-    
-    // Extract the x and y distances for the trace
-    const xDistances = normalizedGPSData.map(d => d.x);
-    const yDistances = normalizedGPSData.map(d => d.y);
+    // Use the GPS data in meters directly
+    const xDistances = gpsDataLatMeters;
+    const yDistances = gpsDataLngMeters;
 
-    // Convert the barometric pressure to feet and normalize
-    const altitudeData = barometerData.map(convertPressureToFeet);
+    // Use the barometric altitude data in meters directly
+    const altitudeData = barometerDataMeters;
     const minAltitude = Math.min(...altitudeData);
     const normalizedAltitudeData = altitudeData.map(altitude => altitude - minAltitude);
 
@@ -399,7 +402,7 @@ function init3DChart() {
         }
     };
 
-    // Determine the range for the z-axis (altitude), now normalized
+    // Determine the range for the z-axis (altitude) in meters
     const maxAltitude = Math.max(...normalizedAltitudeData);
 
     const layout = {
@@ -408,17 +411,17 @@ function init3DChart() {
         plot_bgcolor: '#05060d',
         scene: {
             xaxis: {
-                title: 'Longitude (ft)',
+                title: 'Latitude (m)',
                 color: 'white',
                 gridcolor: '#888'
             },
             yaxis: {
-                title: 'Latitude (ft)',
+                title: 'Longitude (m)',
                 color: 'white',
                 gridcolor: '#888'
             },
             zaxis: {
-                title: 'Altitude (ft)',
+                title: 'Altitude (m)',
                 range: [0, maxAltitude],
                 color: 'white',
                 gridcolor: '#888'
