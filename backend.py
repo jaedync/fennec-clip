@@ -4,10 +4,11 @@ import pandas as pd
 from werkzeug.utils import secure_filename
 import os
 import re
-from bintoexcel import map_mode_number_to_name, calculate_unix_epoch_time_from_timeus, calculate_unix_epoch_time, fetch_weather_data, serialize_obj, match_and_append_weather_data
 import simplejson as json
 from collections import defaultdict,  Counter
 from pymavlink import mavutil
+import datetime
+import datetime as dt
   # Replace "your_module" with the actual module name
 from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -16,7 +17,10 @@ import base64
 import time
 import uuid
 import math
+import requests
+import pytz
 
+import tempfile
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -37,6 +41,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Initialize DataFrame
 df = pd.DataFrame()
 current_excel_file = None
+current_bin_file = None
 
 from math import radians, cos, sin, asin, sqrt
 
@@ -68,6 +73,53 @@ def haversine_distance(lat1, lon1, lat2, lon2, axis):
     # Radius of Earth in kilometers is 6371. Convert to meters by multiplying by 1000
     distance_in_meters = 6371 * c * 1000
     return distance_in_meters
+
+# Modified fetch_weather_data function
+def fetch_weather_data(start_timestamp, end_timestamp):
+    url = f"http://weather.jaedynchilton.com/historic?start-timestamp={int(start_timestamp)}&end-timestamp={int(end_timestamp)}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()['data'], True
+    else:
+        print(f"Failed to fetch weather data: {response.status_code}")
+        return [], False
+    
+# The mapping is specific to ArduPilot on helicopters. This info was sourced from ChatGPT-4. YMMV.
+def map_mode_number_to_name(mode_number):
+    mode_map = {
+        0: 'STABILIZE',
+        1: 'ACRO',
+        2: 'ALT_HOLD',
+        3: 'AUTO',
+        4: 'GUIDED',
+        5: 'LOITER',
+        6: 'RTL',
+        7: 'CIRCLE',
+        9: 'LAND',
+        11: 'DRIFT',
+        13: 'SPORT',
+        14: 'FLIP',
+        15: 'AUTOTUNE',
+        16: 'POSHOLD',
+        17: 'BRAKE',
+        18: 'THROW',
+        19: 'AVOID_ADSB',
+        20: 'GUIDED_NOGPS',
+        21: 'SMART_RTL',
+        22: 'FLOWHOLD',
+        23: 'FOLLOW',
+        24: 'ZIGZAG',
+        25: 'SYSTEMID',
+        26: 'AUTOROTATE'
+    }
+    return mode_map.get(mode_number, f'Unknown-{mode_number}')
+
+def calculate_unix_epoch_time_for_record(time_us, initial_unix_epoch_time, initial_time_us):
+    return initial_unix_epoch_time + (time_us - initial_time_us) / 1e6
+
+def calculate_unix_epoch_time_from_timeus(time_us, initial_unix_epoch_time, initial_time_us):
+    delta_time_s = (time_us - initial_time_us) / 1e6  # Converting microseconds to seconds
+    return initial_unix_epoch_time + delta_time_s
 
 def normalize_gps_data(gps_df):
     """
@@ -130,62 +182,238 @@ def calculate_average_temperature(weather_data):
 
     return total_temp_celsius / count if count > 0 else None
 
-def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
-    # allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "PSCN", "PSCE", "PSCD"]
-    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "XKF1", "XKF5"]
+def gps_time_to_unix_epoch(gms, gwk):
+    gps_epoch = datetime.datetime(1980, 1, 6, 0, 0, 0)
+    seconds_since_gps_epoch = gwk * 604800 + gms / 1000
+    return (gps_epoch + datetime.timedelta(seconds=seconds_since_gps_epoch)).timestamp()
+
+def convert_bin_to_json(bin_file_path):
+    allowed_packet_types = ["XKF1", "XKF5", "IMU", "GPS", "RCOU", "MODE"]
     mlog = mavutil.mavlink_connection(bin_file_path)
-
-    # Create a dictionary to hold lists for each allowed packet type and instance
     parsed_data = defaultdict(list)
-
-    emit('status', {'message': 'Starting conversion...', 'progress': 0, 'color': '#FFD700'}, broadcast=True)
+    fileInfo = {}
+    
+    imu_counter = 0
+    xkf_counter = 0
+    rcou_counter = 0
+    xkf_skip = 4   # Skip count to maintain 5Hz for XKF (20Hz / 5Hz)
+    imu_skip = 400  # Skip count to maintain 5Hz for IMU (400Hz / 1Hz)
+    rcou_skip = 20  # Skip count to maintain 5Hz for RCOU (10Hz / 0.5Hz)
 
     packet_count = 0
     packet_type_counter = Counter()  # For detailed packet type counts
-    batch_size = 50000  # Update the progress every 50000 packets
+    batch_size = 100000  # Update the progress every 100000 packets
+    last_emitted_progress = -5
 
-    # Parse the messages and build the data structure
     while True:
         msg = mlog.recv_msg()
         if msg is None:
             break
         msg_dict = msg.to_dict()
         packet_type = msg_dict.get('mavpackettype')
-        packet_count = packet_count + 1
-        
+        packet_count += 1
+
         if packet_type in allowed_packet_types:
-            instance = msg_dict.get('I', 0)
-            if packet_type == 'VIBE':
-                instance = msg_dict.get('IMU', 0)
-            if packet_type == 'MODE':
+            if packet_type == "IMU":
+                if imu_counter % imu_skip == 0:
+                    parsed_data[packet_type].append(msg_dict)
+                imu_counter += 1
+            elif packet_type == "XKF1" or packet_type == "XKF5":
+                if 'C' in msg_dict and msg_dict['C'] == 0:
+                    if xkf_counter % xkf_skip == 0:
+                        parsed_data[packet_type].append(msg_dict)
+                    xkf_counter += 1
+            elif packet_type == "RCOU":
+                if rcou_counter % rcou_skip == 0:
+                    parsed_data[packet_type].append(msg_dict)
+                rcou_counter += 1
+            elif packet_type == 'MODE':
                 mode_name = map_mode_number_to_name(msg_dict.get('Mode', -1))
                 msg_dict['ModeName'] = mode_name
+                parsed_data[packet_type].append(msg_dict)
+            else:
+                parsed_data[packet_type].append(msg_dict)
+        
+        if packet_count == 0:
+            emit('status', {'message': f'Total MAVLink packets to scan: {mlog._count:,}', 'progress': 0, 'color': '#32CD32'}, broadcast=True)
 
-            # Create a unique key for each packet type and instance
-            key = f"{packet_type}_{instance}" if packet_type in ['IMU', 'VIBE', 'MAG'] else packet_type
+        
+        current_progress_percentage = mlog.percent
 
-            # Append the message dictionary to the list for its packet type and instance
-            parsed_data[key].append(msg_dict)
+        # Emit progress in batches or every 5%
+        if packet_count % batch_size == 0 or (current_progress_percentage - last_emitted_progress) >= 5:
+            last_emitted_progress = current_progress_percentage
 
-        # Emit progress in batches
-        if packet_count % batch_size == 0:
-            # Calculate and emit progress
-            progress_percentage = "{:.2f}".format(mlog.percent)
-            # Check if packet_count is in millions
+            progress_percentage = "{:.2f}".format(current_progress_percentage)
             if packet_count >= 1000000:
-                # Format count in millions with one decimal place
                 packet_count_formatted = "{:.2f}m".format(packet_count / 1000000)
             else:
-                # Format count in thousands with comma for every three digits
                 packet_count_formatted = "{:,}k".format(int(packet_count / 1000))
 
             emit('status', {
                 'message': f'Imported {packet_count_formatted} packets... ({progress_percentage}%)',
                 'packet_types': dict(packet_type_counter),
-                'progress': 2,
+                'progress': current_progress_percentage * 0.9,
                 'color': '#1E90FF'
             }, broadcast=True)
-    emit('status', {'message': f'Total MAVLink packets imported: {packet_count:,}!', 'progress': 7, 'color': '#32CD32'}, broadcast=True)
+
+    emit('status', {'message': f'Total MAVLink packets imported: {packet_count:,}!', 'progress': 90, 'color': '#32CD32'}, broadcast=True)
+
+    emit('status', {'message': 'Generating JSON data...', 'color': '#32CD32'}, broadcast=True)
+
+    # Process the GPS data first to obtain Unix_Epoch_Time
+    gps_data = parsed_data.get('GPS', [])
+    if gps_data:
+        for entry in gps_data:
+            entry['Unix_Epoch_Time'] = calculate_unix_epoch_time(entry)
+        
+        # Calculate initial values for time conversion
+        initial_unix_epoch_time = gps_data[0]['Unix_Epoch_Time']
+        initial_time_us = gps_data[0]['TimeUS']
+        
+        # Compute flight duration and Datetime_Chicago without seconds
+        initial_unix_epoch_time = gps_data[0]['Unix_Epoch_Time']
+        final_unix_epoch_time = gps_data[-1]['Unix_Epoch_Time']
+        flight_duration = final_unix_epoch_time - initial_unix_epoch_time
+
+        # Prepare file info
+        file_name = os.path.basename(bin_file_path)
+        chicago_tz = pytz.timezone('America/Chicago')
+        initial_utc_time = dt.datetime.fromtimestamp(initial_unix_epoch_time, dt.timezone.utc)
+        initial_datetime_chicago = initial_utc_time.astimezone(chicago_tz).replace(second=0, microsecond=0)
+
+        fileInfo = {
+            'file_name': file_name,
+            'datetime_chicago': initial_datetime_chicago.isoformat(),
+            'flight_duration_seconds': flight_duration
+        }
+
+        # Convert Unix Epoch Time to Datetime in Chicago timezone
+        chicago_tz = pytz.timezone('America/Chicago')
+        for entry in gps_data:
+            utc_time = dt.datetime.fromtimestamp(entry['Unix_Epoch_Time'], dt.timezone.utc)
+            entry['Datetime_Chicago'] = utc_time.astimezone(chicago_tz).isoformat()
+
+        # Now, update Unix_Epoch_Time for other data types
+        for packet_type, data_list in parsed_data.items():
+            if packet_type != 'GPS':
+                for entry in data_list:
+                    entry['Unix_Epoch_Time'] = calculate_unix_epoch_time_from_timeus(
+                        entry['TimeUS'], initial_unix_epoch_time, initial_time_us
+                    )
+
+    # Emit progress updates (adjust as needed)
+    emit('status', {'message': 'Data conversion completed', 'progress': 100, 'color': '#32CD32'}, broadcast=True)
+
+    # Convert the parsed data to JSON, maintaining separate folders for each packet type
+    json_output = {packet_type: records for packet_type, records in parsed_data.items()}
+
+    # Add fileInfo to JSON output
+    json_output['file_info'] = fileInfo
+
+    save_json(json_output, bin_file_path)
+
+def save_json(data, bin_file_path):
+    base_name = os.path.basename(bin_file_path)
+    json_filename = f"{os.path.splitext(base_name)[0]}.json"
+    file_path = os.path.join(UPLOAD_FOLDER, json_filename)
+
+    with open(file_path, 'w') as f:
+        json.dump(data, f)
+
+    global current_json_file
+    current_json_file = file_path
+
+def calculate_unix_epoch_time(row):
+    gps_week = row['GWk']
+    gps_milliseconds = row['GMS']
+    return (gps_week * 604800) + (gps_milliseconds / 1000) + 315964800
+
+def convert_bin_to_export(bin_file_path, export_file_path, start_time_unix, end_time_unix, file_format='excel'):
+    print(f"bin_file_path: {bin_file_path}")
+    print(f"export_file_path: {export_file_path}")
+    print(f"start_time_unix: {start_time_unix}")
+    print(f"end_time_unix: {end_time_unix}")
+    
+    def determine_key_for_packet(msg_dict):
+        packet_type = msg_dict['mavpackettype']
+        instance = msg_dict.get('I', 0)
+
+        if packet_type == 'VIBE':
+            instance = msg_dict.get('IMU', 0)
+        elif packet_type == 'MODE':
+            mode_name = map_mode_number_to_name(msg_dict.get('Mode', -1))
+            msg_dict['ModeName'] = mode_name
+        elif 'XKF' in packet_type:
+            instance = msg_dict.get('C', 0)
+            if instance not in [0, 1]:
+                instance = 0  # Default to 0 if 'c' is not 0 or 1
+
+        # Create a unique key for each packet type and instance
+        if packet_type in ['IMU', 'VIBE', 'MAG'] or 'XKF' in packet_type:
+            key = f"{packet_type}_{instance}"
+        else:
+            key = packet_type
+
+        return key
+
+    # Initialize variables
+    initial_unix_epoch_time = None
+    initial_time_us = None
+    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "XKF1", "XKF5"]
+    mlog = mavutil.mavlink_connection(bin_file_path)
+
+    parsed_data = defaultdict(list)
+
+    emit('status', {'message': 'Starting conversion...', 'progress': 0, 'color': '#FFD700'}, broadcast=True)
+
+    progress_scale = 20 if file_format == 'excel' else 80
+    last_emitted_progress = -5  # Initialize to a value less than 0
+    packet_count = 0
+    packet_type_counter = Counter()  # For detailed packet type counts
+    batch_size = 100000  # Update the progress every 100000 packets
+
+    # Parse the messages and build the data structure
+    while True:
+        msg = mlog.recv_msg()
+        if msg is None:
+            break
+
+        msg_dict = msg.to_dict()
+        packet_type = msg_dict.get('mavpackettype')
+        packet_count += 1
+        packet_type_counter[packet_type] += 1  # Count packet types
+
+        if packet_type in allowed_packet_types:
+            key = determine_key_for_packet(msg_dict)
+            parsed_data[key].append(msg_dict)
+
+        # Calculate current progress
+        current_progress_percentage = mlog.percent
+        scaled_progress = current_progress_percentage * progress_scale / 100
+
+        # Emit progress in batches or every 5%
+        if packet_count % batch_size == 0 or (current_progress_percentage - last_emitted_progress) >= 5:
+            last_emitted_progress = current_progress_percentage  # Update last emitted progress
+
+            progress_percentage = "{:.2f}".format(current_progress_percentage)
+            if packet_count >= 1000000:
+                packet_count_formatted = "{:.2f}m".format(packet_count / 1000000)
+            else:
+                packet_count_formatted = "{:,}k".format(int(packet_count / 1000))
+
+            emit('status', {
+                'message': f'Imported {packet_count_formatted} packets... ({progress_percentage}%)',
+                'packet_types': dict(packet_type_counter),
+                'progress': scaled_progress,
+                'color': '#1E90FF'
+            }, broadcast=True)
+
+    emit('status', {
+        'message': f'Total MAVLink packets imported: {packet_count:,}!',
+        'progress': 20 if file_format == 'excel' else 80,  # Scale final progress
+        'color': '#32CD32'
+    }, broadcast=True)
 
     # Now create DataFrames in one go
     data_frames = {}
@@ -193,8 +421,6 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
         # Create the DataFrame for this packet type and instance
         data_frames[key] = pd.DataFrame(data_list).drop(columns=['mavpackettype'], errors='ignore')
 
-
-    # emit('status', {'message': 'Approximating GPS Time...', 'progress': 10}, broadcast=True)
     # Add closest GPS time to each DataFrame
     gps_df = data_frames.get('GPS', pd.DataFrame())
     if not gps_df.empty:
@@ -203,10 +429,9 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
         initial_time_us = gps_df['TimeUS'].iloc[0]
         for packet_type, df in data_frames.items():
             df['Unix_Epoch_Time'] = df['TimeUS'].apply(
-                lambda x: calculate_unix_epoch_time_from_timeus(x, initial_unix_epoch_time, initial_time_us)
+                lambda x: calculate_unix_epoch_time_for_record(x, initial_unix_epoch_time, initial_time_us)
             )
 
-    emit('status', {'message': 'Fetching Weather Data...', 'progress': 15, 'color': '#9370DB'}, broadcast=True)
     # Fetch Weather Data
     min_time = gps_df['Unix_Epoch_Time'].min() if not gps_df.empty else None
     max_time = gps_df['Unix_Epoch_Time'].max() + 900 if not gps_df.empty else None
@@ -218,11 +443,13 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
     
     if success and weather_data:
         avg_temperature_celsius = calculate_average_temperature(weather_data)
+        emit('status', {'message': f'Weather Data Retrieved! ({avg_temperature_celsius}C)', 'color': '#9370DB'}, broadcast=True)
         if avg_temperature_celsius is not None:
             print(f"Average Temperature: {avg_temperature_celsius} Celsius")
         else:
             print("Failed to calculate average temperature")
     else:
+        emit('status', {'message': 'Weather Data Unavailable', 'color': '#FF0000'}, broadcast=True)
         print("Failed to fetch weather data or data is empty")
 
 
@@ -245,76 +472,36 @@ def convert_bin_to_excel(bin_file_path, excel_file_path, namespace, sid):
 
         data_frames['BARO'] = baro_df  # Update the BARO DataFrame in the dictionary
 
+    # Filter DataFrames based on Unix_Epoch_Time
+    for packet_type, df in data_frames.items():
+        # Filter DataFrame rows where Unix_Epoch_Time is between start_time_unix and end_time_unix
+        df_filtered = df[(df['Unix_Epoch_Time'] >= start_time_unix) & (df['Unix_Epoch_Time'] <= end_time_unix)]
+        data_frames[packet_type] = df_filtered
 
-    # Create the "ALL" table
-    all_df = gps_df.copy()
-    time_window = 0.2
+    # Determine file format and save accordingly
+    if file_format == 'excel':
+        # Calculate the total number of rows across all DataFrames
+        total_rows = sum(len(df) for df in data_frames.values())
+        rows_written = 0
 
-    # Define the desired order of appending packet types to the "ALL" table
-    ordered_packet_types = ["GPS", "RATE", "RCIN", "RCOU", "VIBE_0", "VIBE_1", "HELI",
-                            "IMU_0", "IMU_1", "POWR", "MCU", "BAT", "MAG_0", "MAG_1", 
-                            # "BARO", "ATT", "GPA", "PSCN", "PSCE", "PSCD"]
-                            # "BARO", "ATT", "GPA"]
-                            "BARO", "ATT", "GPA", "XKF1", "XKF5"]
+        with pd.ExcelWriter(export_file_path, engine='xlsxwriter') as writer:
+            for packet_type, df in data_frames.items():
+                rows_written += len(df)
+                # Calculate progress percentage
+                progress_percentage = int((rows_written / total_rows) * 100)
+                emit('status', {'message': f'Writing {packet_type} to Excel... ({progress_percentage}%)', 'progress': 20 + progress_percentage * 0.8, 'color': '#20B2AA'}, broadcast=True)
 
-    # Rename GPS columns to include "GPS_" prefix
-    gps_columns_to_rename = {col: f"GPS_{col}" for col in all_df.columns if col != 'Unix_Epoch_Time'}
-    all_df.rename(columns=gps_columns_to_rename, inplace=True)
-    emit('status', {'message': 'Processing Packets...', 'progress': 20, 'color': '#FFA500'}, broadcast=True)
-    progress = 0
-    # Append data in the specified order
-    for packet_type in ordered_packet_types:
-        if packet_type == 'GPS':
-            continue
-        if packet_type not in data_frames:
-            continue
-        progress = progress + 1
-        # emit('status', {'message': f'Handling packet type: {packet_type}', 'progress': 22 + progress*4}, broadcast=True)
-    
-        df = data_frames[packet_type]
-        total_packets = len(df)  # Counting the total number of packets for the current packet type
-        avg_df = pd.DataFrame()
-        
-        for gps_time in all_df['Unix_Epoch_Time']:
-            min_time = gps_time - time_window
-            max_time = gps_time + time_window
-            close_rows = df[(df['Unix_Epoch_Time'] >= min_time) & (df['Unix_Epoch_Time'] <= max_time)]
+                df.to_excel(writer, sheet_name=packet_type, index=False)
+
+    elif file_format == 'hdf5':
+        emit('status', {'message': f'Writing to HDF5... One moment...', 'progress': 90, 'color': '#00FF00'}, broadcast=True)
+        with pd.HDFStore(export_file_path, mode='w') as hdf_store:
+            for packet_type, df in data_frames.items():
+                hdf_store.put(packet_type, df, format='table', data_columns=True)
+    else:
+        raise ValueError("Unsupported file format")
             
-            if close_rows.empty:
-                avg_row = pd.Series({col: None for col in df.columns})
-            else:
-                avg_row = close_rows.mean()
-
-            avg_row['Unix_Epoch_Time'] = gps_time
-            # Filter out empty or all-NA rows
-            if not avg_row.isna().all():
-                avg_df = avg_df._append(avg_row, ignore_index=True)
-
-        # Rename columns to include source table
-        renamed_columns = {col: f"{packet_type}_{col}" for col in df.columns if col != 'Unix_Epoch_Time'}
-        avg_df.rename(columns=renamed_columns, inplace=True)
-        
-        all_df = pd.merge(all_df, avg_df, on='Unix_Epoch_Time', how='left')
-
-        # Emitting the total packet count for each packet type
-        emit('status', {'message': f'Processed {total_packets:,} {packet_type} packets.', 
-                        'progress': 22 + progress*4, 'color': '#FFD700'}, broadcast=True)
-    # Append weather data to the "ALL" table
-    if weather_data:
-        all_df = match_and_append_weather_data(all_df, weather_data)
-
-    # Reorder columns to ensure 'Unix_Epoch_Time' is the first column
-    reordered_columns = ['Unix_Epoch_Time'] + [col for col in all_df.columns if col != 'Unix_Epoch_Time']
-    all_df = all_df[reordered_columns]
-
-    emit('status', {'message': 'Successfully processed all packets! Saving DataFrame...', 'progress': 95, 'color': '#20B2AA'}, broadcast=True)
-    
-    # Save as Excel
-    with pd.ExcelWriter(excel_file_path, engine='xlsxwriter') as writer:
-        all_df.to_excel(writer, sheet_name='ALL', index=False)
-        for packet_type, df in data_frames.items():
-            reordered_columns = ['Unix_Epoch_Time'] + [col for col in df.columns if col != 'Unix_Epoch_Time']
-            df[reordered_columns].to_excel(writer, sheet_name=packet_type, index=False)
+    emit('status', {'message': f'Data successfully saved to {file_format.upper()} file!', 'progress': 100, 'color': '#32CD32'}, broadcast=True)
 
 def save_df_to_json(df):
     global current_json_file
@@ -332,23 +519,24 @@ def save_df_to_json(df):
 def load_data_from_excel(file_path):
     global df
     try:
-        df = pd.read_excel(file_path, sheet_name='ALL')  # Assuming the sheet name is 'ALL'
-        
-        required_columns = [
-            'GPS_Lat', 'GPS_Lng', 'BARO_Press', 
-            'IMU_0_AccX', 'IMU_0_AccY', 'IMU_0_AccZ', 
-            'RCOU_C1', 'RCOU_C2', 'RCOU_C3', 'RCOU_C4', 'RCOU_C8'
-        ]
-        
-        if not all(column in df.columns for column in required_columns):
-            return "Invalid ArduPilot-ish Data Structure!\nTalk to Jaedyn lol", 400
+        with pd.ExcelFile(file_path) as xls:
+            df = pd.read_excel(file_path, sheet_name='ALL')  # Assuming the sheet name is 'ALL'
+            
+            required_columns = [
+                'GPS_Lat', 'GPS_Lng', 'BARO_Press', 
+                'IMU_0_AccX', 'IMU_0_AccY', 'IMU_0_AccZ', 
+                'RCOU_C1', 'RCOU_C2', 'RCOU_C3', 'RCOU_C4', 'RCOU_C8'
+            ]
+            
+            if not all(column in df.columns for column in required_columns):
+                return "Invalid ArduPilot-ish Data Structure!\nTalk to Jaedyn lol", 400
 
-        df['Datetime_Chicago'] = pd.to_datetime(df['Unix_Epoch_Time'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/Chicago')
-        df['Datetime_Chicago'] = df['Datetime_Chicago'].astype(str)
+            df['Datetime_Chicago'] = pd.to_datetime(df['Unix_Epoch_Time'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/Chicago')
+            df['Datetime_Chicago'] = df['Datetime_Chicago'].astype(str)
 
-        save_df_to_json(df)
-        
-        return "File uploaded and data refreshed", 200
+            save_df_to_json(df)
+            
+            return "File uploaded and data refreshed", 200
     except Exception as e:
         return str(e), 400
     
@@ -356,7 +544,8 @@ def load_data_from_excel(file_path):
 def load_data(file_path):
     global df
     try:
-        df = pd.read_csv(file_path)
+        with open(file_path, 'r') as file:
+            df = pd.read_csv(file)
         
         # Specify the columns you expect
         required_columns = [
@@ -391,7 +580,7 @@ from flask_socketio import emit
 
 @socketio.on('upload_and_convert')
 def handle_upload_and_convert(json_data):
-    global current_excel_file
+    global current_bin_file
     filename = json_data.get('filename')
     if not filename:
         emit('status', {'message': 'Filename not provided.'})
@@ -404,26 +593,14 @@ def handle_upload_and_convert(json_data):
     file_ext = os.path.splitext(filename)[1]
     
     if file_ext == '.bin':
-        # Convert BIN to Excel
-        excel_file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename.replace('.bin', '.xlsx')))
-        convert_bin_to_excel(file_path, excel_file_path, request.namespace, request.sid)  # Perform the conversion
-        file_path = excel_file_path  # Update the file_path to the new Excel file
-        message, status_code = load_data_from_excel(file_path)
-        if status_code == 200:
-            current_excel_file = excel_file_path  # Update the variable only if successful
-    elif file_ext == '.csv':
-        # Load legacy data into DataFrame from CSV
-        message, status_code = load_data(file_path)
-    elif file_ext == '.xlsx':
-        # Load data into DataFrame from Excel
-        message, status_code = load_data_from_excel(file_path)
-        if status_code == 200:
-            current_excel_file = file_path  # Update the variable only if successful
+        # Convert BIN to JSON for frontend UI
+        current_bin_file = file_path
+        convert_bin_to_json(file_path)
     else:
         emit('status', {'message': 'Unsupported file type', 'progress': 0})
         return
     
-    emit('status', {'message': 'Conversion and upload complete', 'progress': 100}, broadcast=True)
+    emit('status', {'message': 'Bin File Upload Complete!', 'progress': 100}, broadcast=True)
 
 @app.route('/upload', methods=['POST'])
 def file_upload():
@@ -438,16 +615,20 @@ def file_upload():
         filename = secure_filename(file.filename)
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
-        try:
-            # Open the file in a with block to ensure it's closed properly
-            with open(file_path, 'wb') as f:
-                f.write(file.read())
-            return jsonify(message="File uploaded successfully"), 200
+        # Skip saving if file already exists, but continue processing
+        if not os.path.exists(file_path):
+            try:
+                file.save(file_path)
+            except IOError as e:
+                # Log the exception for I/O errors
+                print(f'An I/O error occurred: {e}')
+                return jsonify(error="An error occurred while uploading the file"), 500
+            except Exception as e:
+                # Log general exceptions
+                print(f'An error occurred: {e}')
+                return jsonify(error="An error occurred while uploading the file"), 500
 
-        except Exception as e:
-            # Log the exception
-            print('An error occurred: %s', e)
-            return jsonify(error="An error occurred while uploading the file"), 500
+        return jsonify(message="File processed successfully"), 200
 
     return jsonify(error="Unknown error"), 500
 
@@ -458,14 +639,11 @@ def sanitize_filename(filename):
     # Keep only word characters (alphanumeric & underscore)
     safe_str = re.sub(r"[^\w\s-]", '', filename_without_ext)
     
-    # Always append .csv
-    safe_str += '.csv'
-    
     return safe_str
 
 @app.route('/is_data_available', methods=['GET'])
 def is_data_available():
-    return jsonify({'available': not df.empty})
+    return jsonify({'available': current_json_file is not None})
 
 @app.route('/data', methods=['GET'])
 def get_data():
@@ -503,11 +681,11 @@ def trim_sheet_data(sheet_df, start_time_unix, end_time_unix, time_column_name='
 
 def get_mode_table(file_path):
     try:
-        xls = pd.ExcelFile(file_path)
-        if 'MODE' not in xls.sheet_names:
-            return None  # 'MODE' sheet does not exist
-        mode_df = pd.read_excel(file_path, sheet_name='MODE')
-        return mode_df
+        with pd.ExcelFile(file_path) as xls:
+            if 'MODE' not in xls.sheet_names:
+                return None  # 'MODE' sheet does not exist
+            mode_df = pd.read_excel(file_path, sheet_name='MODE')
+            return mode_df
     except Exception as e:
         print(f"Error: {e}")
         return None  # Return None in case of any error
@@ -555,65 +733,119 @@ def get_data_as_csv():
     )
 
 
-@app.route('/export', methods=['POST'])
-def export_data():
-    global current_excel_file  # Declare the variable as global
-    if df.empty:
-        return jsonify({'message': 'No data to export'}), 404
-    
-    data = request.json
-    start_time = data['start_time']
-    end_time = data['end_time']
+@socketio.on('export_data')
+def handle_export_data(json_data):
+    if not json_data:
+        emit('status', {'message': 'No data provided', 'progress': 0, 'color': '#FF0000'})
+        return
 
-    raw_filename = data.get('filename', 'filtered_data.csv')
+    # Extract values from json_data
+    start_time = json_data.get('start_time')
+    end_time = json_data.get('end_time')
+    raw_filename = json_data.get('filename', 'exported_data.xlsx')
+    file_format = json_data.get('format', 'excel')  # Default to 'excel'
+
+    if file_format == 'excel':
+        file_ext = '.xlsx'
+    elif file_format == 'hdf5':
+        file_ext = '.h5'
+    else:
+        emit('status', {'message': 'Unsupported file format', 'progress': 0, 'color': '#FF0000'})
+        return
+
+    # Ensure required data is provided
+    if not start_time or not end_time:
+        emit('status', {'message': 'Start time or end time not provided', 'progress': 0, 'color': '#FF0000'})
+        return
+
     filename = sanitize_filename(raw_filename)
-    
-    # Check if the filename ends with .xlsx, if not, replace it
-    if not filename.endswith('.xlsx'):
-        filename = filename.replace('.csv', '.xlsx')
+    if not filename.endswith(file_ext):
+        filename += file_ext
 
+    # Convert start and end times from string to Unix timestamp
     start_time_unix = pd.to_datetime(start_time).timestamp()
     end_time_unix = pd.to_datetime(end_time).timestamp()
 
-    filtered_df = df[(df['Unix_Epoch_Time'] >= start_time_unix) & (df['Unix_Epoch_Time'] <= end_time_unix)]
+    # Path for the resulting Excel file
+    export_file_path = os.path.join(DOWNLOAD_FOLDER, filename)
 
-    if len(filtered_df) == 0:
-        return jsonify({'message': 'Filtered data is empty, no Excel generated'})
+    if current_bin_file:
+        convert_bin_to_export(current_bin_file, export_file_path, start_time_unix, end_time_unix, file_format)
+        # Check if the Excel file was created successfully
+        if os.path.exists(export_file_path):
+            emit('status', {'message': 'File Export Complete!', 'progress': 0}, broadcast=True)
+        else:
+            emit('status', {'message': f'Failed to create {file_format.upper()} file', 'progress': 0, 'color': '#FF0000'})
+    else:
+        emit('status', {'message': 'No binary file available to export', 'progress': 0, 'color': '#FF0000'})
 
-    file_path = os.path.join(DOWNLOAD_FOLDER, filename)
 
-    # Use xlsxwriter to create a new Excel file and add a worksheet
-    with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
-        # Save the main filtered DataFrame
-        filtered_df.to_excel(writer, sheet_name='ALL', index=False)
 
-        # Get the xlsxwriter workbook and worksheet objects
-        # workbook  = writer.book
-        worksheet = writer.sheets['ALL']
+def list_files_in_directory(directory):
+    """List files in a given directory with URLs and sizes, sorted by modification time (newest first), excluding JSON files."""
+    files = []
+    for filename in os.listdir(directory):
+        if filename.endswith('.json'):
+            continue  # Skip JSON files
 
-        # Define a built-in table style with banded rows for a modern look
-        # Choose a style that suits your preference, e.g., 'Table Style Medium 9'
-        table_style = 'Table Style Medium 9'
+        filepath = os.path.join(directory, filename)
+        if os.path.isfile(filepath):
+            file_stat = os.stat(filepath)
+            file_type = next((ext for ext in ['bin', 'xlsx', 'h5', 'other'] if filename.endswith(f".{ext}")), 'other')
+            files.append({
+                "filename": filename,
+                "url": f'/{directory}/{filename}',
+                "mtime": file_stat.st_mtime,  # Modification time
+                "size": file_stat.st_size,    # File size in bytes
+                "type": file_type
+            })
 
-        # Add a table to the worksheet including the banded rows
-        worksheet.add_table(0, 0, len(filtered_df), len(filtered_df.columns) - 1, {
-            'style': table_style,
-            'columns': [{'header': column_name} for column_name in filtered_df.columns]
-        })
+    return files
 
-        # Read other sheets from original Excel and trim data based on start and end times
-        if current_excel_file is None:
-            return jsonify({'message': 'Original Excel file not found'}), 400
+@app.route('/get_file_list')
+def get_file_list():
+    # List files in both uploads and downloads directories
+    upload_files = list_files_in_directory(UPLOAD_FOLDER)
+    download_files = list_files_in_directory(DOWNLOAD_FOLDER)
 
-        xls = pd.ExcelFile(current_excel_file)
-        for sheet_name in xls.sheet_names:
-            if sheet_name == 'ALL':
-                continue
-            sheet_df = pd.read_excel(current_excel_file, sheet_name=sheet_name)
-            trimmed_df = trim_sheet_data(sheet_df, start_time_unix, end_time_unix)
-            trimmed_df.to_excel(writer, sheet_name=sheet_name, index=False)
+    # Combine both lists
+    files = upload_files + download_files
 
-    return send_file(file_path, as_attachment=True, download_name=filename)
+    # Sort the combined list by 'mtime' in descending order
+    files.sort(key=lambda x: x['mtime'], reverse=True)
+
+    return jsonify(files)
+
+@app.route('/load_json', methods=['POST'])
+def load_json():
+    if 'filename' not in request.json:
+        return jsonify(error="Filename not provided"), 400
+
+    json_filename = request.json['filename']
+    bin_filename = json_filename.replace('.json', '.bin')
+    json_file_path = os.path.join(app.config['UPLOAD_FOLDER'], json_filename)
+    bin_file_path = os.path.join(app.config['UPLOAD_FOLDER'], bin_filename)
+
+    if not os.path.exists(json_file_path):
+        return jsonify(error="JSON file does not exist"), 404
+
+    if not os.path.exists(bin_file_path):
+        return jsonify(error="BIN file does not exist"), 404
+
+    global current_json_file, current_bin_file
+    current_json_file = json_file_path
+    current_bin_file = bin_file_path
+
+    return jsonify(message="JSON file loaded successfully"), 200
+
+
+@app.route('/downloads/<filename>')
+def download_file(filename):
+    return send_from_directory(DOWNLOAD_FOLDER, filename, as_attachment=True)
+
+@app.route('/uploads/<filename>')
+def upload_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
 
 @app.route('/')
 def index():
@@ -624,7 +856,6 @@ def favicon():
     return send_from_directory('static', 'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
-
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
 
 

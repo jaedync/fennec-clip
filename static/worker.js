@@ -1,48 +1,32 @@
-// worker.js
-
-// Function to average data points
-function averageData(data) {
-    let averagedData = [];
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-        sum += data[i];
-        if ((i + 1) % 10 === 0) {
-            averagedData.push(sum / 10);
-            sum = 0;
-        }
-    }
-    return averagedData;
-}
-
 self.onmessage = function(event) {
-    const { jobId, timeLabels, originalGpsColors, startRange, endRange, unselectedAlpha } = event.data;
-    
-    const gpsColors = timeLabels.map((time, index) => {
-        return (time >= startRange && time <= endRange) 
-            ? originalGpsColors[index] 
-            : `rgba(48, 48, 48, ${unselectedAlpha})`;  // Using RGBA
-    });
-    // console.log(timeLabels)
+    const { jobId, xkf1Data, imuData, RCOUData, startRange, endRange, unselectedAlpha } = event.data;
 
-    const avgTimeLabels = averageData(timeLabels.map(date => date.getTime())).map(time => new Date(time));
-    
-    const imuTimeSeriesColors = avgTimeLabels.map(time => {
-        return (time >= startRange && time <= endRange) 
-            ? 'rgb(0,255,255)' 
-            : `rgba(48, 48, 48, ${unselectedAlpha})`;  // Using RGBA
+    // Gradient for xkf1Data
+    const xkf1Colors = xkf1Data.map((item, index, array) => {
+        let itemTime = new Date(item.Unix_Epoch_Time * 1000);
+        const isSelected = itemTime >= startRange && itemTime <= endRange;
+        const gradientColor = `rgb(${Math.floor(255 * index / array.length)}, 0, ${Math.floor(255 - 255 * index / array.length)})`;
+        return isSelected ? gradientColor : `rgba(24, 24, 24, ${unselectedAlpha})`;
     });
 
-    const rcouTimeSeriesColors = avgTimeLabels.map(time => {
-        return (time >= startRange && time <= endRange) 
-            ? 'rgb(255,165,0)' 
-            : `rgba(48, 48, 48, ${unselectedAlpha})`;  // Using RGBA
+    // Prepare color data for IMU charts
+    const createImuColors = (color) => imuData.map(item => {
+        let itemTime = new Date(item.Unix_Epoch_Time * 1000);
+        return (itemTime >= startRange && itemTime <= endRange) ? color : `rgba(48, 48, 48, ${unselectedAlpha})`;
     });
 
-    // Send back results along with the job ID
-    self.postMessage({ 
+    // Prepare color data for RCOU charts
+    const createRCOUColors = (color) => RCOUData.map(item => {
+        let itemTime = new Date(item.Unix_Epoch_Time * 1000);
+        return (itemTime >= startRange && itemTime <= endRange) ? color : `rgba(48, 48, 48, ${unselectedAlpha})`;
+    });
+
+    self.postMessage({
         jobId, 
-        gpsColors, 
-        imuTimeSeriesColors,
-        rcouTimeSeriesColors
+        xkf1Colors, 
+        imuAccXColors: createImuColors('rgb(255, 0, 0)'), // Red
+        imuAccYColors: createImuColors('rgb(0, 255, 0)'), // Green
+        imuAccZColors: createImuColors('rgb(0, 0, 255)'), // Blue
+        RCOUColors: createRCOUColors('rgb(255,165,0)'), // Orange
     });
 };

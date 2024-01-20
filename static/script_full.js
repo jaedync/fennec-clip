@@ -1,8 +1,13 @@
 // Initialize variables
 let timeLabels, gpsDataLat, gpsDataLng, barometerData;
 let timeline, items;
-let originalGpsColors; // New variable for original gradient colors
+let originalGpsColors;
 let rcouC1Data, rcouC2Data, rcouC3Data, rcouC4Data, rcouC8Data;
+let imuData;
+let xkf1Data;
+let modeTableData;
+let gpsData;
+let RCOUData;
 
 let latestJobId = 0;
 
@@ -17,11 +22,36 @@ function throttle(func, delay) {
     }, delay);
 }
 
+const socket = io.connect(document.domain + ':' + location.port);
 document.addEventListener('DOMContentLoaded', function() {
+
+    fetchFileList();
     checkDataAvailability();
     // Initialize Web Worker
     const colorWorker = new Worker('/static/worker.js');
 
+    function resetTimeline() {
+        if (timeline) {
+            timeline.destroy();
+            timeline = null;
+        }
+    }
+    
+    function reset3DChart() {
+        Plotly.purge('dPlot');
+    }
+    
+    function resetTimeSeriesPlots() {
+        Plotly.purge('xTimeSeries');
+        Plotly.purge('yTimeSeries');
+        Plotly.purge('zTimeSeries');
+        Plotly.purge('rcouC1TimeSeries');
+        Plotly.purge('rcouC2TimeSeries');
+        Plotly.purge('rcouC3TimeSeries');
+        Plotly.purge('rcouC4TimeSeries');
+        Plotly.purge('rcouC8TimeSeries');
+    }
+    
     function resetCharts() {
         // Destroy existing timeline if it exists
         if (timeline) {
@@ -62,6 +92,114 @@ document.addEventListener('DOMContentLoaded', function() {
         Plotly.purge('rcouC8TimeSeries');
     }
 
+    function fetchFileList() {
+        fetch('/get_file_list')
+        .then(response => response.json())
+        .then(files => {
+            const fileListContainer = document.getElementById('fileList');
+            fileListContainer.innerHTML = '';  // Clear existing list
+            
+            files.forEach(file => {
+                const fileBox = document.createElement('div');
+                fileBox.className = `file-box ${file.type}`;
+    
+                // Create a span for the filename
+                const fileNameSpan = document.createElement('span');
+                fileNameSpan.innerText = file.filename;
+    
+                // Create a span for the file size in smaller text
+                const fileSizeSpan = document.createElement('span');
+                fileSizeSpan.innerText = `Size: ${formatBytes(file.size)}`;
+                fileSizeSpan.style.fontSize = 'smaller';
+                fileSizeSpan.style.display = 'block'; // To make it appear below the filename
+    
+                // Append filename and file size to the fileBox
+                fileBox.appendChild(fileNameSpan);
+                fileBox.appendChild(fileSizeSpan);
+    
+                // File download functionality
+                fileBox.onclick = () => {
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = file.url;
+                    downloadLink.download = file.filename;
+                    document.body.appendChild(downloadLink);
+                    downloadLink.click();
+                    document.body.removeChild(downloadLink);
+                };
+            
+                // Define colors for different file types
+                let borderColor = '';
+                let backgroundColor = '';
+            
+                // Add a 'Load' button for .bin files
+                if (file.type === 'bin') {
+                    const loadBtn = document.createElement('button');
+                    loadBtn.innerText = 'Load';
+                    loadBtn.className = 'load-btn';
+                    loadBtn.onclick = (event) => {
+                        event.stopPropagation(); // Prevent triggering the file download
+                        loadBinFile(file.filename);
+                    };
+
+                    fileBox.appendChild(loadBtn);
+                }
+
+                // Apply styles
+                fileBox.style.borderColor = borderColor;
+                fileBox.style.backgroundColor = backgroundColor;
+                fileBox.style.borderWidth = '1px';
+                fileBox.style.borderStyle = 'solid';
+                fileBox.style.padding = '5px';
+                fileBox.style.margin = '5px 0';
+                fileBox.style.cursor = 'pointer';
+            
+                fileListContainer.appendChild(fileBox);
+            });            
+            
+        })
+        .catch(error => console.error('Error fetching file list:', error));
+    }
+
+    
+    // Function to load a .bin file using the /load_json endpoint
+    function loadBinFile(filename) {
+        // Assuming the JSON file has the same name as the BIN file but with a .json extension
+        const jsonFilename = filename.replace('.bin', '.json');
+
+        fetch('/load_json', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ filename: jsonFilename })
+        })
+        .then(response => {
+            if (response.ok) {
+                return response.json();
+            } else {
+                throw new Error('Failed to load file');
+            }
+        })
+        .then(data => {
+            console.log('File loaded:', data);
+            fetchDataAndInit();
+        })
+        .catch(error => console.error('Error loading file:', error));
+    }
+
+
+    // Helper function to format bytes into a readable format
+    function formatBytes(bytes, decimals = 2) {
+        if (bytes === 0) return '0 Bytes';
+
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
 
     function checkDataAvailability() {
         fetch('is_data_available')
@@ -75,24 +213,24 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Failed to check data availability:', error);
         });
     }
-    
+    // Listen for messages from worker
     // Listen for messages from worker
     colorWorker.onmessage = function(event) {
-        const { jobId, gpsColors, imuTimeSeriesColors, rcouTimeSeriesColors } = event.data;
+        const { jobId, xkf1Colors, imuAccXColors, imuAccYColors, imuAccZColors, RCOUColors } = event.data;
 
         // Only update if the job ID matches the latest job
         if (jobId === latestJobId) {
-            Plotly.restyle('dPlot', { 'marker.color': [gpsColors] });
-            Plotly.restyle('xTimeSeries', { 'marker.color': [imuTimeSeriesColors] });
-            Plotly.restyle('yTimeSeries', { 'marker.color': [imuTimeSeriesColors] });
-            Plotly.restyle('zTimeSeries', { 'marker.color': [imuTimeSeriesColors] });
+            Plotly.restyle('dPlot', { 'marker.color': [xkf1Colors] });
+            Plotly.restyle('xTimeSeries', { 'marker.color': [imuAccXColors]});
+            Plotly.restyle('yTimeSeries', { 'marker.color': [imuAccYColors]});
+            Plotly.restyle('zTimeSeries', { 'marker.color': [imuAccZColors]});
 
             // New lines to update RCOU colors
-            Plotly.restyle('rcouC1TimeSeries', { 'marker.color': [rcouTimeSeriesColors] });
-            Plotly.restyle('rcouC2TimeSeries', { 'marker.color': [rcouTimeSeriesColors] });
-            Plotly.restyle('rcouC3TimeSeries', { 'marker.color': [rcouTimeSeriesColors] });
-            Plotly.restyle('rcouC4TimeSeries', { 'marker.color': [rcouTimeSeriesColors] });
-            Plotly.restyle('rcouC8TimeSeries', { 'marker.color': [rcouTimeSeriesColors] });
+            Plotly.restyle('rcouC1TimeSeries', { 'marker.color': [RCOUColors] });
+            Plotly.restyle('rcouC2TimeSeries', { 'marker.color': [RCOUColors] });
+            Plotly.restyle('rcouC3TimeSeries', { 'marker.color': [RCOUColors] });
+            Plotly.restyle('rcouC4TimeSeries', { 'marker.color': [RCOUColors] });
+            Plotly.restyle('rcouC8TimeSeries', { 'marker.color': [RCOUColors] });
         }
     };
 
@@ -142,26 +280,21 @@ document.addEventListener('DOMContentLoaded', function() {
         return messages[Math.floor(Math.random() * messages.length)];
     }
     
-
     // Fetch data and initialize charts
     function fetchDataAndInit() {
+        resetTimeline();
         // Show loading message and spinner
         document.getElementById('dataLoadingMessage').style.display = 'block';
         document.getElementById('randomMessage').innerText = getRandomMessage(); // Set random message
-    
+
         fetch('data')
-        .then(response => {
-            if (!response.ok) {
-                console.error(`HTTP error! status: ${response.status}`);
-                return;
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log("Fetched Data:", data);  // Log the fetched data
-            processData(data);
+        .then(response => response.json())
+        .then(jsonData => {
+            console.log("Fetched Data:", jsonData);  // Log the fetched data
+            
+            processData(jsonData);
             initVisualizations();
-    
+
             // Hide loading message and spinner
             document.getElementById('dataLoadingMessage').style.display = 'none';
         })
@@ -171,14 +304,13 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error("Fetch Error:", error);
         });
     }
-    
-
     // Function to initialize all visualizations
     function initVisualizations() {
         initTimeline();
-        initTimeSeriesPlots(imuDataX, imuDataY, imuDataZ);  // Add this line
+        initTimeSeriesPlots(imuData);
         // console.log("originalGpsColors:", originalGpsColors);
         init3DChart();
+        fetchFileList();
     }    
 
     // Function to show and hide loading message
@@ -191,52 +323,50 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     // Initialize socket connection
-    const socket = io.connect('https://' + document.domain + ':' + location.port);
 
-// Function to clear all status messages from the queue
-function clearStatusMessages() {
-    const statusQueue = document.getElementById('statusQueue');
-    while (statusQueue.firstChild) {
-        statusQueue.removeChild(statusQueue.firstChild);
+    // Function to clear all status messages from the queue
+    function clearStatusMessages() {
+        const statusQueue = document.getElementById('statusQueue');
+        while (statusQueue.firstChild) {
+            statusQueue.removeChild(statusQueue.firstChild);
+        }
     }
-}
 
     // Function to append a new status message to the queue
-function appendStatusMessage(message, type = 'default', color = '#5cb4b8') {
-    const statusQueue = document.getElementById('statusQueue');
-    const newStatus = document.createElement('div');
-    newStatus.className = `status-message status-${type}`;
-    newStatus.innerText = message;
+    function appendStatusMessage(message, type = 'default', color = '#5cb4b8') {
+        const statusQueue = document.getElementById('statusQueue');
+        
+        // Clear any existing messages before appending a new one
+        while (statusQueue.firstChild) {
+            statusQueue.removeChild(statusQueue.firstChild);
+        }
 
-    // Set border-left color based on the provided color
-    newStatus.style.borderLeftColor = color;
+        const newStatus = document.createElement('div');
+        newStatus.className = `status-message status-${type}`;
+        newStatus.innerText = message;
 
-    // Apply the fade-in animation
-    newStatus.style.animation = 'slideFadeIn 0.5s forwards';
+        // Set border-left color based on the provided color
+        newStatus.style.borderLeftColor = color;
 
-    // Insert the new status message at the beginning of the queue
-    if (statusQueue.firstChild) {
-        statusQueue.insertBefore(newStatus, statusQueue.firstChild);
-    } else {
+        // Apply the fade-in animation
+        newStatus.style.animation = 'slideFadeIn 0.5s forwards';
+
+        // Append the new status message
         statusQueue.appendChild(newStatus);
     }
 
-    // Keep only four messages in the queue
-    while (statusQueue.childNodes.length > 8) {
-        statusQueue.removeChild(statusQueue.lastChild);
-    }
-}
 
     // Listen for status messages from the server
     socket.on('status', function(data) {
         console.log(data.message);
-        updateProgressBar(data.progress);
+        if (data.progress) {
+            updateProgressBar(data.progress);
+        }
         // Check if the color is provided in the data, otherwise default to a standard color
         var messageColor = data.color || '#5cb4b8'; // Default color
         // Append the received status message to the queue with the specified color
-        appendStatusMessage(data.message, 'default', messageColor); // Use 'default' or another type as needed
-        if (data.message === 'Conversion and upload complete') {
-            
+        appendStatusMessage(data.message, 'default', messageColor);
+        if (data.message === 'Bin File Upload Complete!') {
             // Hide loading message and spinner
             setLoading(false);
             // Clear the status message queue
@@ -244,6 +374,15 @@ function appendStatusMessage(message, type = 'default', color = '#5cb4b8') {
             // Refresh the charts and data
             resetCharts();
             fetchDataAndInit();
+            fetchFileList();
+        }
+        if (data.message === 'File Export Complete!') {
+            // Hide loading message and spinner
+            setLoading(false);
+            // Clear the status message queue
+            clearStatusMessages();
+            // Refresh file list
+            fetchFileList();
         }
         
         if (data.message === 'Starting conversion...') {
@@ -251,11 +390,22 @@ function appendStatusMessage(message, type = 'default', color = '#5cb4b8') {
         }
     });
 
-
     function updateProgressBar(progress) {
         const progressBar = document.getElementById('progressBar');
 
         progressBar.style.width = progress + '%';
+    }
+    
+    function setProgressBarColor(color) {
+        const progressBar = document.getElementById('progressBar');
+        progressBar.style.background = color;
+    }
+    
+    function updateLoadingHeaderText(text) {
+        const loadingHeader = document.querySelector('.loadingHeaderText');
+        if (loadingHeader) {
+            loadingHeader.textContent = text;
+        }
     }
 
     document.getElementById('csvFile').addEventListener('change', async function() {
@@ -263,17 +413,36 @@ function appendStatusMessage(message, type = 'default', color = '#5cb4b8') {
         const formData = new FormData();
         formData.append('file', file);
 
+        updateLoadingHeaderText(`Uploading ${file.name}...`);
+        setProgressBarColor('#FFA500'); // Orange color for upload
+
         if (file.name.endsWith('.bin')) {
             setLoading(true);
         }
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData
-        });
-        if (response.ok) {
-            // Emitting upload_and_convert event to server
-            socket.emit('upload_and_convert', { filename: file.name });
-        }
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload', true);
+    
+        xhr.upload.onprogress = function(e) {
+            if (e.lengthComputable) {
+                const percentage = (e.loaded / e.total) * 100;
+                updateProgressBar(percentage);
+            }
+        };
+    
+        xhr.onload = function() {
+            if (xhr.status === 200) {
+                // Emitting upload_and_convert event to server
+                socket.emit('upload_and_convert', { filename: file.name });
+                // Reset progress bar
+                updateProgressBar(0);
+                setProgressBarColor('#72dee4'); // Reset to original color
+            } else {
+                console.error('Upload failed:', xhr.responseText);
+            }
+        };
+    
+        xhr.send(formData);
     });
     
     // Trigger the hidden file input when the "Upload" button is clicked
@@ -283,34 +452,38 @@ function appendStatusMessage(message, type = 'default', color = '#5cb4b8') {
 
 // Function to process data
 function processData(data) {
-    // console.log("Processing Data:", data);  // Log the data being processed
-    if (!data || !Array.isArray(data) || data.length === 0) {
-        console.error("Data is undefined, null or empty");
+    if (!data) {
+        console.error("Data is undefined or null");
         return;
     }
-    // Prepare data for the 3D chart
-    timeLabels = data.map(row => new Date(row['Datetime_Chicago']));
-    gpsDataLat = data.map(row => row['GPS_Lat']);
-    gpsDataLatMeters = data.map(row => row['GPS_lat_m']);
-    gpsDataLng = data.map(row => row['GPS_Lng']);
-    gpsDataLngMeters = data.map(row => row['GPS_lng_m']);
-    barometerData = data.map(row => row['BARO_Press']);
-    barometerDataMeters = data.map(row => row['BARO_Altitude_Meters_Estimate']);
     
-    // Initialize IMU Data
-    imuDataX = data.map(row => row['IMU_0_AccX']);
-    imuDataY = data.map(row => row['IMU_0_AccY']);
-    imuDataZ = data.map(row => row['IMU_0_AccZ']);
+    // Extract XKF1 and IMU data
+    xkf1Data = data['XKF1'] || [];
+    imuData = data['IMU'] || [];
+    modeTableData = data['MODE'] || [];
+    gpsData = data['GPS'] || [];
+    RCOUData = data['RCOU'] || [];
+    console.log("xkf1Data:", xkf1Data);
+    console.log("imuData:", imuData);
 
-    // Initialize RCOU Data
-    rcouC1Data = data.map(row => row['RCOU_C1']);
-    rcouC2Data = data.map(row => row['RCOU_C2']);
-    rcouC3Data = data.map(row => row['RCOU_C3']);
-    rcouC4Data = data.map(row => row['RCOU_C4']);
-    rcouC8Data = data.map(row => row['RCOU_C8']);
+    // Check if file info is available in the data
+    if (data.file_info) {
+        const fileInfoEl = document.getElementById('fileInfo');
+        fileInfoEl.innerHTML = `
+            <p>File: ${data.file_info.file_name}</p>
+            <p>Date: ${formatDate(data.file_info.datetime_chicago)}</p>
+            <p>Duration: ${formatDuration(data.file_info.flight_duration_seconds)}</p>
+        `;
+    }
+    timeLabels = gpsData.map(row => new Date(row['Datetime_Chicago']));
+
+    // Prepare data for the 3D chart (XKF1)
+    gpsDataLatMeters = xkf1Data.map(row => row['PN']);  // North position
+    gpsDataLngMeters = xkf1Data.map(row => row['PE']);  // East position
+    barometerDataMeters = xkf1Data.map(row => row['PD']);  // Down position (altitude)
 
     // Initialize originalGpsColors
-    const numPoints = gpsDataLat.length;
+    const numPoints = gpsDataLatMeters.length;
     originalGpsColors = Array.from({length: numPoints}, (_, i) => 
         `rgb(${Math.floor(255 * i / numPoints)}, 0, ${Math.floor(255 - 255 * i / numPoints)})`
     );
@@ -343,32 +516,37 @@ document.addEventListener('DOMContentLoaded', function () {
     checkDataAvailability();
 });
 
-function convertPressureToFeet(pressureInPascals) {
-    // Convert pressure from Pascals to millibars
-    var pressureInMillibars = pressureInPascals / 100;
-    // Apply the barometric formula
-    return (1 - Math.pow(pressureInMillibars / 1013.25, 1/5.255)) * 145366.45;
-}
-function degreesToRadians(degrees) {
-    return degrees * Math.PI / 180;
-}
-
-function degreesToFeet(latitudeDegrees, longitudeDegrees, avgLatitude) {
-    // Convert latitude to feet (1 degree latitude = ~364,000 feet)
-    const latitudeFeet = latitudeDegrees * 364000;
-    // Calculate the conversion factor for longitude to feet based on the average latitude
-    const longitudeFeet = longitudeDegrees * Math.cos(degreesToRadians(avgLatitude)) * 364000;
-    return { latitudeFeet, longitudeFeet };
-}
-
-function normalizeGPSData(gpsDataLat, gpsDataLng) {
-    // Calculate the average latitude for the longitude conversion
-    const avgLatitude = gpsDataLat.reduce((a, b) => a + b, 0) / gpsDataLat.length;
-    // Normalize the GPS data to feet
-    return gpsDataLat.map((lat, i) => {
-        const { latitudeFeet, longitudeFeet } = degreesToFeet(lat - gpsDataLat[0], gpsDataLng[i] - gpsDataLng[0], avgLatitude);
-        return { x: longitudeFeet, y: latitudeFeet };
+// Helper function to format the date
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    const formattedDate = date.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
     });
+    return formattedDate;
+}
+
+// Helper function to format duration in seconds to a more readable format
+function formatDuration(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.round(seconds % 60);
+    let formattedDuration = '';
+
+    if (hours > 0) {
+        formattedDuration += `${hours} ${hours > 1 ? 'hours' : 'hour'} `;
+    }
+    if (minutes > 0) {
+        formattedDuration += `${minutes} ${minutes > 1 ? 'minutes' : 'minute'} `;
+    }
+    if (secs > 0 || formattedDuration === '') {
+        formattedDuration += `${secs} ${secs === 1 ? 'second' : 'seconds'}`;
+    }
+    return formattedDuration.trim();
 }
 
 function init3DChart() {
@@ -376,24 +554,12 @@ function init3DChart() {
         console.error("GPS or Barometer Data is undefined, null or empty");
         return;
     }
-    if (typeof originalGpsColors === 'undefined') {
-        console.error("originalGpsColors is undefined");
-        return;
-    }
 
-    // Use the GPS data in meters directly
-    const xDistances = gpsDataLatMeters;
-    const yDistances = gpsDataLngMeters;
-
-    // Use the barometric altitude data in meters directly
-    const altitudeData = barometerDataMeters;
-    const minAltitude = Math.min(...altitudeData);
-    const normalizedAltitudeData = altitudeData.map(altitude => altitude - minAltitude);
-
+    // Adjust to use PN, PE, PD for 3D chart
     const trace = {
-        x: xDistances,
-        y: yDistances,
-        z: normalizedAltitudeData,
+        x: gpsDataLngMeters,  // East position
+        y: gpsDataLatMeters,  // North position
+        z: barometerDataMeters.map(alt => -alt),  // Down position (inverted for altitude)
         mode: 'markers',
         type: 'scatter3d',
         marker: {
@@ -402,8 +568,7 @@ function init3DChart() {
         }
     };
 
-    // Determine the range for the z-axis (altitude) in meters
-    const maxAltitude = Math.max(...normalizedAltitudeData);
+    const maxAltitude = Math.max(...barometerDataMeters.map(alt => -alt));
 
     const layout = {
         margin: { l: 0, r: 0, b: 0, t: 0 },
@@ -454,7 +619,8 @@ async function fetchModeTable() {
 async function initTimeline() {
     const container = document.getElementById('visualization');
 
-    const modeTableData = await fetchModeTable();
+    // const modeTableData = await fetchModeTable();
+    console.log("mode_table:", modeTableData);
     const modeItems = modeTableData.map(entry => {
         let className = '';
         switch(entry.ModeName) {
@@ -577,13 +743,14 @@ function updateColors(newTime, markerId) {
     latestJobId++;
     colorWorker.postMessage({
         jobId: latestJobId,
-        timeLabels,
-        originalGpsColors,
-        startRange,
-        endRange,
-        unselectedAlpha: 0.001  // New variable for unselected point opacity
-    });
-}, 100); // delay of 200 milliseconds
+        xkf1Data: xkf1Data,
+        imuData: imuData,
+        RCOUData: RCOUData,
+        startRange: startRange,
+        endRange: endRange,
+        unselectedAlpha: 0.001
+    });    
+}, 100); // delay of 100 milliseconds
     
 }
 document.getElementById('downloadCsvBtn').addEventListener('click', function() {
@@ -602,7 +769,7 @@ document.getElementById('downloadCsvBtn').addEventListener('click', function() {
         const endRange = new Date(endMarkerTime);
 
         // Prompt the user for a filename
-        let filename = prompt("Enter the filename for the exported data:", "filtered_data.csv");
+        let filename = prompt("Enter the filename for the exported data:", "clipped_data.csv");
 
         // If the user cancels the prompt, filename will be null
         if (filename === null) {
@@ -649,42 +816,6 @@ document.getElementById('downloadCsvBtn').addEventListener('click', function() {
     }
 });
 
-// Function to average data points
-function averageData(data) {
-    if (!data || !data.length) {
-        console.error("Data is undefined, null or empty");
-        console.error("Stack trace:", new Error().stack); // Log the stack trace
-        return [];
-    }
-    let averagedData = [];
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-        sum += data[i];
-        if ((i + 1) % 10 === 0) {
-            averagedData.push(sum / 10);
-            sum = 0;
-        }
-    }
-    return averagedData;
-}
-
-// Function to calculate the median of data points
-function medianData(data) {
-    let medianData = [];
-    let chunk = [];
-    for (let i = 0; i < data.length; i++) {
-        chunk.push(data[i]);
-        if ((i + 1) % 10 === 0) {
-            chunk.sort((a, b) => a - b);
-            const mid = Math.floor(chunk.length / 2);
-            const median = chunk.length % 2 === 0 ? (chunk[mid - 1] + chunk[mid]) / 2 : chunk[mid];
-            medianData.push(median);
-            chunk = [];
-        }
-    }
-    return medianData;
-}
-
 // Create a helper function to make a new trace for RCOU data
 function createTrace(xData, yData, name) {
     return {
@@ -697,82 +828,89 @@ function createTrace(xData, yData, name) {
     };
 }
 
-// Initialize the time-series plots with data averaging and color coding
-function initTimeSeriesPlots(imuDataX, imuDataY, imuDataZ) {
-    // Average every 10 points
-    // console.log("imuDataX:", imuDataX);
-    // console.log("imuDataY:", imuDataY);
-    // console.log("imuDataZ:", imuDataZ);
+function initTimeSeriesPlots(imuData) {
+    if (!imuData || imuData.length === 0) {
+        console.error("IMU data is empty or not available");
+        return;
+    }
 
-    const avgImuDataX = averageData(imuDataX);
-    const avgImuDataY = averageData(imuDataY);
-    const avgImuDataZ = averageData(imuDataZ);
+    if (!RCOUData || RCOUData.length === 0) {
+        console.error("RCOU data is empty or not available");
+        return;
+    }
 
-    const avgRcouC1Data = averageData(rcouC1Data);
-    const avgRcouC2Data = averageData(rcouC2Data);
-    const avgRcouC3Data = averageData(rcouC3Data);
-    const avgRcouC4Data = averageData(rcouC4Data);
-    const avgRcouC8Data = averageData(rcouC8Data);
+    // Extracting time and IMU data
+    const timeLabelsIMU = imuData.map(row => new Date(row['Unix_Epoch_Time'] * 1000));
+    const imuDataX = imuData.map(row => row['AccX']);
+    const imuDataY = imuData.map(row => row['AccY']);
+    const imuDataZ = imuData.map(row => row['AccZ']);
 
-    // Calculate new time labels by getting the median of every 10 original points
-    const avgTimeLabels = medianData(timeLabels.map(date => date.getTime())).map(time => new Date(time));
+    const timeLabelsRCOU = imuData.map(row => new Date(row['Unix_Epoch_Time'] * 1000));
+    const rcouC1Data = RCOUData.map(row => row['C1']);
+    const rcouC2Data = RCOUData.map(row => row['C2']);
+    const rcouC3Data = RCOUData.map(row => row['C3']);
+    const rcouC4Data = RCOUData.map(row => row['C4']);
+    const rcouC8Data = RCOUData.map(row => row['C8']);
 
+    // Define a layout for the plot
     const layout = {
         margin: { l: 50, r: 10, b: 40, t: 40 },
-        title: 'Accelerometer Data over Time',
-        paper_bgcolor: '#05060d',  // Dark background
-        plot_bgcolor: '#05060d',   // Dark background
+        title: 'IMU Data over Time',
+        paper_bgcolor: '#05060d',  
+        plot_bgcolor: '#05060d',   
         xaxis: {
             color: 'white',
-            gridcolor: '#888',  // Dark grid lines
-            title: 'Time'
+            gridcolor: '#888',
+            title: 'Time',
+            type: 'date' // Specify the x-axis type as date
         },
         yaxis: {
             color: 'white',
-            gridcolor: '#888'  // Dark grid lines
+            gridcolor: '#888' 
         },
         font: {
-            color: 'white'  // Text color
+            color: 'white'
         }
     };
 
+    // Creating traces for each axis
     const traceX = {
-        x: avgTimeLabels,
-        y: avgImuDataX,
+        x: timeLabelsIMU,
+        y: imuDataX,
         mode: 'lines+markers',
-        marker: { color: 'rgb(0,255,255)' },
         line: { color: 'grey' },
-        name: 'X-axis'
+        marker: { color: 'rgb(255, 0, 0)' },
+        name: 'AccX'
     };
 
     const traceY = {
-        x: avgTimeLabels,
-        y: avgImuDataY,
+        x: timeLabelsIMU,
+        y: imuDataY,
         mode: 'lines+markers',
-        marker: { color: 'rgb(0,255,255)' },
         line: { color: 'grey' },
-        name: 'Y-axis'
+        marker: { color: 'rgb(0, 255, 0)' },
+        name: 'AccY'
     };
 
     const traceZ = {
-        x: avgTimeLabels,
-        y: avgImuDataZ,
+        x: timeLabelsIMU,
+        y: imuDataZ,
         mode: 'lines+markers',
-        marker: { color: 'rgb(0,255,255)' },
         line: { color: 'grey' },
-        name: 'Z-axis'
+        marker: { color: 'rgb(0, 0, 255)' },
+        name: 'AccZ'
     };
-    
-    // Create new time series plots for the RCOU data
-    const traceRC1 = createTrace(avgTimeLabels, avgRcouC1Data, 'RCOU_C1');
-    const traceRC2 = createTrace(avgTimeLabels, avgRcouC2Data, 'RCOU_C2');
-    const traceRC3 = createTrace(avgTimeLabels, avgRcouC3Data, 'RCOU_C3');
-    const traceRC4 = createTrace(avgTimeLabels, avgRcouC4Data, 'RCOU_C4');
-    const traceRC8 = createTrace(avgTimeLabels, avgRcouC8Data, 'RCOU_C8');
 
-    Plotly.newPlot('xTimeSeries', [traceX], { ...layout, title: 'X-axis Acceleration over Time' });
-    Plotly.newPlot('yTimeSeries', [traceY], { ...layout, title: 'Y-axis Acceleration over Time' });
-    Plotly.newPlot('zTimeSeries', [traceZ], { ...layout, title: 'Z-axis Acceleration over Time' });
+    const traceRC1 = createTrace(timeLabelsRCOU, rcouC1Data, 'RCOU_C1');
+    const traceRC2 = createTrace(timeLabelsRCOU, rcouC2Data, 'RCOU_C2');
+    const traceRC3 = createTrace(timeLabelsRCOU, rcouC3Data, 'RCOU_C3');
+    const traceRC4 = createTrace(timeLabelsRCOU, rcouC4Data, 'RCOU_C4');
+    const traceRC8 = createTrace(timeLabelsRCOU, rcouC8Data, 'RCOU_C8');
+
+    // Plotting the data
+    Plotly.newPlot('xTimeSeries', [traceX], layout);
+    Plotly.newPlot('yTimeSeries', [traceY], layout);
+    Plotly.newPlot('zTimeSeries', [traceZ], layout);
     Plotly.newPlot('rcouC1TimeSeries', [traceRC1], { ...layout, title: 'RC Out Channel 1 (Aileron)' });
     Plotly.newPlot('rcouC2TimeSeries', [traceRC2], { ...layout, title: 'RC Out Channel 2 (Elevator)' });
     Plotly.newPlot('rcouC3TimeSeries', [traceRC3], { ...layout, title: 'RC Out Channel 3 (Throttle)' });
@@ -780,16 +918,22 @@ function initTimeSeriesPlots(imuDataX, imuDataY, imuDataZ) {
     Plotly.newPlot('rcouC8TimeSeries', [traceRC8], { ...layout, title: 'RC Out Channel 8 (RPM Control)' });
 }
 
+
 });
 
-function exportData() {
+function updateLoadingHeaderText(text) {
+    const loadingHeader = document.querySelector('.loadingHeaderText');
+    if (loadingHeader) {
+        loadingHeader.textContent = text;
+    }
+}
+
+function exportData(format = 'excel') {
     if (!timeline) {
         applyShakeAnimationIfNoTimeline();
         return;
     }
-    // Show export loading message
-    const exportLoadingElement = document.getElementById('exportLoadingMessage');
-    exportLoadingElement.style.display = 'block';
+
     // Get custom time markers
     const startMarkerTime = timeline.getCustomTime('startMarker');
     const endMarkerTime = timeline.getCustomTime('endMarker');
@@ -800,50 +944,29 @@ function exportData() {
         const endRange = new Date(endMarkerTime);
 
         // Prompt user for a filename
-        const filename = prompt("Enter the filename for the exported data:", "filtered_data.xlsx");
+        const filename = prompt("Enter the filename for the exported data:", "clip");
 
         // If the user cancels the prompt, filename will be null
         if (filename === null) {
-            // Hide export loading message
-            exportLoadingElement.style.display = 'none';
             return;
         }
 
-        fetch('export', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ start_time: startRange.toISOString(), end_time: endRange.toISOString(), filename: filename })
-        })
-        .then(response => {
-            // Hide export loading message
-            exportLoadingElement.style.display = 'none';
-            if (response.ok) {
-                return response.blob();  // convert to blob
-            } else {
-                return response.json().then(data => Promise.reject(data));  // reject the Promise with the error message
-            }
-        })
-        .then(blob => {
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;  // Use the filename provided by the user
-            a.click();
-            window.URL.revokeObjectURL(url);
-        })
-        .catch(error => {
-            // Hide export loading message
-            exportLoadingElement.style.display = 'none';
-            console.error(error);
-            alert("Failed to export data");
+        // Update the loading header text for export
+        updateLoadingHeaderText(`Exporting ${filename} to ${format.toUpperCase()}...`);
+
+        // Emit an event to the server with the necessary data
+        socket.emit('export_data', {
+            start_time: startRange.toISOString(), 
+            end_time: endRange.toISOString(), 
+            filename: filename,
+            format: format
         });
+
     } else {
-        exportLoadingElement.style.display = 'none';
         console.error('Start or end marker time not found');
     }
 }
+
 
 
 function applyShakeAnimationIfNoTimeline() {

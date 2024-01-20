@@ -25,17 +25,9 @@
                 <div id="statusQueue" class="status-queue">
                     <!-- Status messages will be appended here -->
                 </div>
+                <img id="loadingImage" src="https://cdn.discordapp.com/attachments/1099561426059800626/1168592018121961623/IMG_0275.gif" alt="Loading">
             </div>
-        </div>
-        <div class="loadingMessageStyle" id="exportLoadingMessage" style="display: none;">
-            <div class="centered">
-                <div class="spinner export"></div> <!-- Spinner for loading animation -->
-                <div class="loadingHeader">
-                    <p class="loadingHeaderText">Exporting data to Excel file. One moment...</p>
-                </div>
-            </div>
-            <img id="loadingImage" src="https://cdn.discordapp.com/attachments/1099561426059800626/1168592018121961623/IMG_0275.gif" alt="Loading">
-        </div>             
+        </div>      
         <div class="loadingMessageStyle" id="dataLoadingMessage" style="display: none;">
             <div class="centered">
                 <div class="spinner"></div> <!-- Spinner for loading animation -->
@@ -44,12 +36,17 @@
                 </div>
             </div>
         </div>              
-        <h1>FENNEC Data Clipping Tool</h1>
-        <div class="flex-container">
+        <div class="header">
+            <h1 class="header-title">FENNEC Data Clipping Tool</h1>
+            <div class="header-file-info" id="fileInfo">
+                <!-- File info will be populated here -->
+            </div>
+        </div>
+        <div class="flex-container" id="chartcontainer">
             <div class="flex-item flex-item--3d">
                 <div id="dPlot" class="plot"></div>
             </div>              
-            <div class="flex-item">
+            <div class="flex-item" style="max-width:500px;">
                 <div class="time-series-container">
                     <div id="xTimeSeries" class="plot"></div>
                     <div id="yTimeSeries" class="plot"></div>
@@ -59,7 +56,10 @@
                     <div id="rcouC3TimeSeries" class="plot"></div>
                     <div id="rcouC4TimeSeries" class="plot"></div>
                     <div id="rcouC8TimeSeries" class="plot"></div>
-                </div>
+                </div>  
+            </div>
+            <div id="fileListContainer">
+                <div id="fileList"></div>
             </div>
         </div>
         <div class="time-display-wrapper">
@@ -76,8 +76,8 @@
         <div class="button-container">
             <button class="upload-button" id="uploadBtn">Upload Logs</button>  <!-- New Upload button -->
             <button onclick="exportData()">Export to XLSX</button>
-            <button id="downloadCsvBtn">Download as CSV</button>
-            <input type="file" id="csvFile" style="display:none;" accept=".bin,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            <button onclick="exportData('hdf5')">Export to HDF5</button>
+            <input type="file" id="csvFile" style="display:none;" accept=".bin">
         </div>
     </div>
 
