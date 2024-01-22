@@ -18,31 +18,9 @@ Our goal is to provide a robust, user-friendly platform for our project team and
 - **User-Centric Design**: Intuitive interface and controls ensure ease of use for all user levels.
 - **Versatile Data Export**: Export processed data in multiple formats for extended utility and compatibility.
 
-## 🛠 Getting Started
+## 🛠 Getting Started / Installation and Setup
 
 These instructions will guide you through the setup process to get the FENNEC Data Clipping Tool up and running on your local machine.
-
-### Prerequisites
-
-- Node.js (v14.0+)
-- Python (v3.8+)
-
-## Required Python Packages
-
-- flask
-- flask-cors
-- pandas
-- werkzeug
-- pymavlink
-- requests
-- openpyxl
-- xlsxwriter
-- flask_socketio
-
-
-## 🛠 Installation and Setup
-
-Follow these steps to get the FENNEC Data Clipping Tool up and running:
 
 ### Prerequisites
 
@@ -53,7 +31,7 @@ Follow these steps to get the FENNEC Data Clipping Tool up and running:
 Install the required Python packages by running the following command:
 
 ```sh
-pip install flask flask-cors pandas werkzeug pymavlink requests openpyxl xlsxwriter flask_socketio
+pip install flask flask-cors pandas werkzeug pymavlink requests openpyxl xlsxwriter flask_socketio simplejson pytz tables
 ```
 
 ### Running the Server
@@ -76,15 +54,16 @@ cd fennec-clip
 python backend.py
 ```
 
-Your server should now be running at http://localhost:5000 and ready to accept MAVLink `.bin` files for processing.
+Your server should now be running at http://localhost:5000 and ready to accept MAVLink `.bin` files for processing. 
+**Note:** If you need to access the server from a computer outside your local network, you can set up port forwarding on your router. However, the setup for port forwarding varies based on your router model and network configuration, and thus is outside the scope of this brief guide. Ensure to follow your router's instructions and understand the security implications of port forwarding.
 
 ## 📊 Usage
 
 To utilize the tool, perform the following steps:
 
-1. **Upload Logs**: Drag and drop your `.bin` file into the upload area.
-2. **Select Data Range**: Use the timeline to select the start and end points of your data.
-3. **Visualize and Analyze**: Observe as the tool charts out the flight path and accelerometer data.
+1. **Upload Logs**: Select your `.bin` file via the upload button.
+2. **Visualize and Analyze**: Observe as the tool charts out the flight path and sensor metrics.
+3. **Select Data Range**: Use the timeline to select the start and end points of your data.
 4. **Export**: Choose your desired format and export the data for further analysis.
 
 ## 📝 License
