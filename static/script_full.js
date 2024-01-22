@@ -103,19 +103,47 @@ document.addEventListener('DOMContentLoaded', function() {
                 const fileBox = document.createElement('div');
                 fileBox.className = `file-box ${file.type}`;
     
+                // Create a container for text elements
+                const textContainer = document.createElement('div');
+                textContainer.className = 'text-container';
+    
                 // Create a span for the filename
                 const fileNameSpan = document.createElement('span');
                 fileNameSpan.innerText = file.filename;
     
                 // Create a span for the file size in smaller text
                 const fileSizeSpan = document.createElement('span');
-                fileSizeSpan.innerText = `Size: ${formatBytes(file.size)}`;
+                fileSizeSpan.innerText = `${formatBytes(file.size)}`;
                 fileSizeSpan.style.fontSize = 'smaller';
                 fileSizeSpan.style.display = 'block'; // To make it appear below the filename
     
-                // Append filename and file size to the fileBox
-                fileBox.appendChild(fileNameSpan);
-                fileBox.appendChild(fileSizeSpan);
+                // Create a span for the last edited date
+                const fileDateSpan = document.createElement('span');
+                fileDateSpan.innerText = `${file.mtime}`;
+                fileDateSpan.style.fontSize = 'smaller';
+                fileDateSpan.style.display = 'block'; // To make it appear below the file size
+    
+                // Append filename, file size, and last edited date to the text container
+                textContainer.appendChild(fileNameSpan);
+                textContainer.appendChild(fileSizeSpan);
+                textContainer.appendChild(fileDateSpan);
+    
+                // Append text container to the fileBox
+                fileBox.appendChild(textContainer);
+    
+                // Add a 'Load' button for .bin files
+                if (file.type === 'bin') {
+                    const loadBtn = document.createElement('button');
+                    loadBtn.innerText = 'Load';
+                    loadBtn.className = 'load-btn';
+                    loadBtn.onclick = (event) => {
+                        event.stopPropagation(); // Prevent triggering the file download
+                        loadBinFile(file.filename);
+                    };
+    
+                    // Append the Load button after the text container
+                    fileBox.appendChild(loadBtn);
+                }
     
                 // File download functionality
                 fileBox.onclick = () => {
@@ -126,36 +154,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     downloadLink.click();
                     document.body.removeChild(downloadLink);
                 };
-            
-                // Define colors for different file types
-                let borderColor = '';
-                let backgroundColor = '';
-            
-                // Add a 'Load' button for .bin files
-                if (file.type === 'bin') {
-                    const loadBtn = document.createElement('button');
-                    loadBtn.innerText = 'Load';
-                    loadBtn.className = 'load-btn';
-                    loadBtn.onclick = (event) => {
-                        event.stopPropagation(); // Prevent triggering the file download
-                        loadBinFile(file.filename);
-                    };
-
-                    fileBox.appendChild(loadBtn);
-                }
-
-                // Apply styles
-                fileBox.style.borderColor = borderColor;
-                fileBox.style.backgroundColor = backgroundColor;
-                fileBox.style.borderWidth = '1px';
-                fileBox.style.borderStyle = 'solid';
-                fileBox.style.padding = '5px';
-                fileBox.style.margin = '5px 0';
-                fileBox.style.cursor = 'pointer';
-            
+    
+                // Apply styles and add the file box to the container
                 fileListContainer.appendChild(fileBox);
-            });            
-            
+            });
         })
         .catch(error => console.error('Error fetching file list:', error));
     }

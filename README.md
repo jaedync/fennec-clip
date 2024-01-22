@@ -2,7 +2,7 @@
 <h1 align="center">FENNEC Data Clipping Tool</h1>
 
 <p align="center">
-  <img src="https://github.com/jaedync/fennec-clip/blob/main/images/Screenshot2023-11-05.png" alt="Sample UI" width="95%">
+  <img src="https://github.com/jaedync/fennec-clip/blob/main/images/Screenshot2024-01-21.png" alt="Sample UI" width="95%">
 </p>
 
 ## 🚁 Project Overview

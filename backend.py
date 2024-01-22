@@ -180,14 +180,41 @@ def calculate_average_temperature(weather_data):
             total_temp_celsius += temp_celsius
             count += 1
 
-    return total_temp_celsius / count if count > 0 else None
+    return round(total_temp_celsius / count, 2) if count > 0 else None
 
 def gps_time_to_unix_epoch(gms, gwk):
     gps_epoch = datetime.datetime(1980, 1, 6, 0, 0, 0)
     seconds_since_gps_epoch = gwk * 604800 + gms / 1000
     return (gps_epoch + datetime.timedelta(seconds=seconds_since_gps_epoch)).timestamp()
 
+def determine_key_for_packet(msg_dict):
+    packet_type = msg_dict['mavpackettype']
+    instance = msg_dict.get('I', 0)
+
+    if packet_type == 'VIBE':
+        instance = msg_dict.get('IMU', 0)
+    elif packet_type == 'MODE':
+        mode_name = map_mode_number_to_name(msg_dict.get('Mode', -1))
+        msg_dict['ModeName'] = mode_name
+    elif 'XKF' in packet_type:
+        instance = msg_dict.get('C', 0)
+        if instance not in [0, 1]:
+            instance = 0  # Default to 0 if 'c' is not 0 or 1
+
+    # Create a unique key for each packet type and instance
+    if packet_type in ['IMU', 'VIBE', 'MAG'] or 'XKF' in packet_type:
+        key = f"{packet_type}_{instance}"
+    else:
+        key = packet_type
+
+    return key
+
+allowed_export_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "XKF1", "XKF5"]
+global_parsed_data = {}
+
 def convert_bin_to_json(bin_file_path):
+    global global_parsed_data
+    global allowed_export_packet_types
     allowed_packet_types = ["XKF1", "XKF5", "IMU", "GPS", "RCOU", "MODE"]
     mlog = mavutil.mavlink_connection(bin_file_path)
     parsed_data = defaultdict(list)
@@ -212,6 +239,13 @@ def convert_bin_to_json(bin_file_path):
         msg_dict = msg.to_dict()
         packet_type = msg_dict.get('mavpackettype')
         packet_count += 1
+
+        if packet_type in allowed_export_packet_types:
+            key = determine_key_for_packet(msg_dict)
+            if key not in global_parsed_data:
+                global_parsed_data[key] = []
+            global_parsed_data[key].append(msg_dict)
+
 
         if packet_type in allowed_packet_types:
             if packet_type == "IMU":
@@ -335,6 +369,8 @@ def convert_bin_to_export(bin_file_path, export_file_path, start_time_unix, end_
     print(f"start_time_unix: {start_time_unix}")
     print(f"end_time_unix: {end_time_unix}")
     
+    mlog = mavutil.mavlink_connection(bin_file_path)
+    
     def determine_key_for_packet(msg_dict):
         packet_type = msg_dict['mavpackettype']
         instance = msg_dict.get('I', 0)
@@ -360,11 +396,9 @@ def convert_bin_to_export(bin_file_path, export_file_path, start_time_unix, end_
     # Initialize variables
     initial_unix_epoch_time = None
     initial_time_us = None
-    allowed_packet_types = ["IMU", "MAG", "RCIN", "RCOU", "GPS", "GPA", "BAT", "POWR", "MCU", "BARO", "RATE", "ATT", "VIBE", "HELI", "MODE", "XKF1", "XKF5"]
-    mlog = mavutil.mavlink_connection(bin_file_path)
 
-    parsed_data = defaultdict(list)
-
+    global global_parsed_data
+    
     emit('status', {'message': 'Starting conversion...', 'progress': 0, 'color': '#FFD700'}, broadcast=True)
 
     progress_scale = 20 if file_format == 'excel' else 80
@@ -373,51 +407,65 @@ def convert_bin_to_export(bin_file_path, export_file_path, start_time_unix, end_
     packet_type_counter = Counter()  # For detailed packet type counts
     batch_size = 100000  # Update the progress every 100000 packets
 
-    # Parse the messages and build the data structure
-    while True:
-        msg = mlog.recv_msg()
-        if msg is None:
-            break
+    # Check if global_parsed_data has the required data
+    if not global_parsed_data:
+        print("dataframes not in memory. Loading...")
 
-        msg_dict = msg.to_dict()
-        packet_type = msg_dict.get('mavpackettype')
-        packet_count += 1
-        packet_type_counter[packet_type] += 1  # Count packet types
+        # Parse the messages and build the data structure
+        while True:
+            msg = mlog.recv_msg()
+            if msg is None:
+                break
 
-        if packet_type in allowed_packet_types:
-            key = determine_key_for_packet(msg_dict)
-            parsed_data[key].append(msg_dict)
+            msg_dict = msg.to_dict()
+            packet_type = msg_dict.get('mavpackettype')
+            packet_count += 1
+            packet_type_counter[packet_type] += 1  # Count packet types
 
-        # Calculate current progress
-        current_progress_percentage = mlog.percent
-        scaled_progress = current_progress_percentage * progress_scale / 100
+            if packet_type in allowed_export_packet_types:
+                key = determine_key_for_packet(msg_dict)
+                if key not in global_parsed_data:
+                    global_parsed_data[key] = []
+                global_parsed_data[key].append(msg_dict)
 
-        # Emit progress in batches or every 5%
-        if packet_count % batch_size == 0 or (current_progress_percentage - last_emitted_progress) >= 5:
-            last_emitted_progress = current_progress_percentage  # Update last emitted progress
 
-            progress_percentage = "{:.2f}".format(current_progress_percentage)
-            if packet_count >= 1000000:
-                packet_count_formatted = "{:.2f}m".format(packet_count / 1000000)
-            else:
-                packet_count_formatted = "{:,}k".format(int(packet_count / 1000))
+            # Calculate current progress
+            current_progress_percentage = mlog.percent
+            scaled_progress = current_progress_percentage * progress_scale / 100
 
-            emit('status', {
-                'message': f'Imported {packet_count_formatted} packets... ({progress_percentage}%)',
-                'packet_types': dict(packet_type_counter),
-                'progress': scaled_progress,
-                'color': '#1E90FF'
-            }, broadcast=True)
+            # Emit progress in batches or every 5%
+            if packet_count % batch_size == 0 or (current_progress_percentage - last_emitted_progress) >= 5:
+                last_emitted_progress = current_progress_percentage  # Update last emitted progress
 
-    emit('status', {
-        'message': f'Total MAVLink packets imported: {packet_count:,}!',
-        'progress': 20 if file_format == 'excel' else 80,  # Scale final progress
-        'color': '#32CD32'
-    }, broadcast=True)
+                progress_percentage = "{:.2f}".format(current_progress_percentage)
+                if packet_count >= 1000000:
+                    packet_count_formatted = "{:.2f}m".format(packet_count / 1000000)
+                else:
+                    packet_count_formatted = "{:,}k".format(int(packet_count / 1000))
+
+                emit('status', {
+                    'message': f'Imported {packet_count_formatted} packets... ({progress_percentage}%)',
+                    'packet_types': dict(packet_type_counter),
+                    'progress': scaled_progress,
+                    'color': '#1E90FF'
+                }, broadcast=True)
+
+        emit('status', {
+            'message': f'MAVLink packets imported.',
+            'progress': 20 if file_format == 'excel' else 80,  # Scale final progress
+            'color': '#32CD32'
+        }, broadcast=True)
+    else:
+        
+        emit('status', {
+            'message': f'MAVLink packets are still in memory, quick export!',
+            'progress': 20 if file_format == 'excel' else 80,  # Scale final progress
+            'color': '#32CD32'
+        }, broadcast=True)
 
     # Now create DataFrames in one go
     data_frames = {}
-    for key, data_list in parsed_data.items():
+    for key, data_list in global_parsed_data.items():
         # Create the DataFrame for this packet type and instance
         data_frames[key] = pd.DataFrame(data_list).drop(columns=['mavpackettype'], errors='ignore')
 
@@ -478,29 +526,33 @@ def convert_bin_to_export(bin_file_path, export_file_path, start_time_unix, end_
         df_filtered = df[(df['Unix_Epoch_Time'] >= start_time_unix) & (df['Unix_Epoch_Time'] <= end_time_unix)]
         data_frames[packet_type] = df_filtered
 
+    # Calculate the total number of rows across all DataFrames
+    total_rows = sum(len(df) for df in data_frames.values())
+    rows_written = 0
+
     # Determine file format and save accordingly
     if file_format == 'excel':
-        # Calculate the total number of rows across all DataFrames
-        total_rows = sum(len(df) for df in data_frames.values())
-        rows_written = 0
-
         with pd.ExcelWriter(export_file_path, engine='xlsxwriter') as writer:
             for packet_type, df in data_frames.items():
                 rows_written += len(df)
+
                 # Calculate progress percentage
                 progress_percentage = int((rows_written / total_rows) * 100)
                 emit('status', {'message': f'Writing {packet_type} to Excel... ({progress_percentage}%)', 'progress': 20 + progress_percentage * 0.8, 'color': '#20B2AA'}, broadcast=True)
-
                 df.to_excel(writer, sheet_name=packet_type, index=False)
 
     elif file_format == 'hdf5':
-        emit('status', {'message': f'Writing to HDF5... One moment...', 'progress': 90, 'color': '#00FF00'}, broadcast=True)
         with pd.HDFStore(export_file_path, mode='w') as hdf_store:
             for packet_type, df in data_frames.items():
+                rows_written += len(df)
+
+                # Calculate progress percentage
+                progress_percentage = int((rows_written / total_rows) * 100)
+                emit('status', {'message': f'Writing {packet_type} to HDF5... ({progress_percentage}%)', 'progress': 90 * progress_percentage / 100, 'color': '#20B2AA'}, broadcast=True)
                 hdf_store.put(packet_type, df, format='table', data_columns=True)
     else:
         raise ValueError("Unsupported file format")
-            
+
     emit('status', {'message': f'Data successfully saved to {file_format.upper()} file!', 'progress': 100, 'color': '#32CD32'}, broadcast=True)
 
 def save_df_to_json(df):
@@ -792,10 +844,15 @@ def list_files_in_directory(directory):
         if os.path.isfile(filepath):
             file_stat = os.stat(filepath)
             file_type = next((ext for ext in ['bin', 'xlsx', 'h5', 'other'] if filename.endswith(f".{ext}")), 'other')
+            
+            # Convert mtime to datetime and localize to Chicago time zone
+            mtime = datetime.datetime.fromtimestamp(file_stat.st_mtime, pytz.timezone('America/Chicago'))
+            formatted_mtime = mtime.strftime('%m/%d/%Y %I:%M:%S %p')  # Format the time
+
             files.append({
                 "filename": filename,
                 "url": f'/{directory}/{filename}',
-                "mtime": file_stat.st_mtime,  # Modification time
+                "mtime": formatted_mtime,  # Formatted modification time
                 "size": file_stat.st_size,    # File size in bytes
                 "type": file_type
             })
@@ -835,6 +892,8 @@ def load_json():
     global current_json_file, current_bin_file
     current_json_file = json_file_path
     current_bin_file = bin_file_path
+    global global_parsed_data
+    global_parsed_data.clear()
 
     return jsonify(message="JSON file loaded successfully"), 200
 
@@ -856,6 +915,6 @@ def favicon():
     return send_from_directory('static', 'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
 
 

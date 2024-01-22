@@ -446,7 +446,10 @@ button.upload-button:hover {
 
 /* Style for each file box */
 .file-box {
-  padding: 8px 12px;
+  display: flex; /* Use flexbox layout */
+  align-items: center; /* Align items vertically in the center */
+  gap: 10px; /* Space between items */
+  padding: 8px;
   margin-bottom: 8px;
   background-color: rgba(255, 255, 255, 0.1); /* Slightly visible background */
   border: 1px solid rgba(255, 255, 255, 0.2); /* Subtle border */
@@ -458,6 +461,13 @@ button.upload-button:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Style for the text container within the file box */
+.text-container {
+  display: flex;
+  flex-direction: column; /* Stack text elements vertically */
+  max-width: 100px;
 }
 
 .file-box.bin {
@@ -496,7 +506,9 @@ button.upload-button:hover {
   margin-left: 10px;
   padding: 5px 10px;
   font-size: 12px;
+  flex-shrink: 0;
   cursor: pointer;
+  margin-left: auto; /* Push the button to the right */
 }
 
 .header {
