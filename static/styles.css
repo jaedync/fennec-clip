@@ -1,17 +1,20 @@
 /* Reset some default browser styles */
-body, h1, button {
+body,
+h1,
+button {
   margin: 0;
   padding: 0;
   border: 0;
   font-size: 100%;
   font: inherit;
   vertical-align: baseline;
-  font-family: 'Roboto', sans-serif;
+  font-family: "Roboto", sans-serif;
 }
 
 body {
   background: #0b1016;
-  background-size: 200% 200%; /* The background size is twice as large as the element to allow for movement */
+  background-size: 200% 200%;
+  /* The background size is twice as large as the element to allow for movement */
   color: white;
   font-family: Arial, sans-serif;
 }
@@ -40,8 +43,10 @@ h1 {
 
 /* Individual flex items (containers for plots) */
 .flex-item {
-  display: flex; /* Use flexbox for children alignment */
-  flex-direction: row; /* Align children in a row */
+  display: flex;
+  /* Use flexbox for children alignment */
+  flex-direction: row;
+  /* Align children in a row */
   flex: 1;
   min-width: 0px;
   background-color: #333;
@@ -70,9 +75,10 @@ h1 {
   height: 100%;
 }
 
-#chartcontainer {
-  height: 75%
-}
+/* #chartcontainer {
+  height: calc(95vh - 255px);
+} */
+
 /* Timeline */
 #visualization {
   width: 100%;
@@ -87,7 +93,8 @@ h1 {
   background-color: #161616;
 }
 
-.vis-label, .vis-time-axis .vis-text {
+.vis-label,
+.vis-time-axis .vis-text {
   color: #ffffff !important;
   background-color: #242424;
 }
@@ -108,9 +115,12 @@ h1 {
   left: -5px;
   right: -5px;
   bottom: 0px;
-  background: rgba(255, 255, 255, 0.0);  /* Faint white background */
-  border-radius: 5px;  /* Rounded corners */
-  border: 2px solid rgba(255, 255, 255, 0.8);  /* Border with 40% opacity */
+  background: rgba(255, 255, 255, 0);
+  /* Faint white background */
+  border-radius: 5px;
+  /* Rounded corners */
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  /* Border with 40% opacity */
 }
 
 /* Button container */
@@ -132,8 +142,10 @@ button {
 
 /* New styles for Upload button */
 button.upload-button {
-  margin-right: 10px;  /* Adds space to the right */
-  background-color: #e44d26;  /* Changes the color */
+  margin-right: 15px;
+  /* Adds space to the right */
+  background-color: #e44d26;
+  /* Changes the color */
 }
 
 button:hover {
@@ -141,7 +153,36 @@ button:hover {
 }
 
 button.upload-button:hover {
-  background-color: #a3361d;  /* Slightly darker shade for hover */
+  background-color: #a3361d;
+  /* Slightly darker shade for hover */
+}
+
+
+/* Styles for Export to XLSX button */
+button[onclick*="exportData('excel')"] {
+  background-color: #228B22; /* Slightly deeper Green */
+}
+
+button[onclick*="exportData('excel')"]:hover {
+  background-color: #1C841C; /* Slightly darker Slightly deeper Green */
+}
+
+/* Styles for Export to HDF5 button */
+button[onclick*="exportData('hdf5')"] {
+  background-color: #ffa500; /* Orange */
+}
+
+button[onclick*="exportData('hdf5')"]:hover {
+  background-color: #cc8400; /* Slightly darker Orange */
+}
+
+/* Styles for Export to PKL button */
+button[onclick*="exportData('pkl')"] {
+  background-color: #8A2BE2; /* Purple */
+}
+
+button[onclick*="exportData('pkl')"]:hover {
+  background-color: #6f22b5; /* Slightly darker Purple */
 }
 
 /* Media Query for smaller screens */
@@ -154,18 +195,23 @@ button.upload-button:hover {
 /* Add this class to make the time-series container scrollable */
 .time-series-container {
   min-width: 0px;
-  flex-grow: 1; /* Take remaining space */
+  flex-grow: 1;
+  /* Take remaining space */
   overflow-y: scroll;
-  height: calc(72vh);  /* Adjust the 200px based on other UI elements */
-}
-.time-series-container::-webkit-scrollbar {
-  width: 0;  /* Remove scrollbar space */
-  background: transparent;  /* Optional: make scrollbar transparent */
-}
-.time-series-container {
-  scrollbar-width: none;  /* Firefox 64+ */
+  height: calc(95vh - 275px);
 }
 
+.time-series-container::-webkit-scrollbar {
+  width: 0;
+  /* Remove scrollbar space */
+  background: transparent;
+  /* Optional: make scrollbar transparent */
+}
+
+.time-series-container {
+  scrollbar-width: none;
+  /* Firefox 64+ */
+}
 
 .time-display-wrapper {
   display: flex;
@@ -183,11 +229,16 @@ button.upload-button:hover {
 }
 
 .time-display {
-  font-size: 1rem;  /* Increased size */
-  font-weight: bold;  /* Bold font */
-  color: rgb(255, 255, 255);  /* White text */
-  margin: 0;  /* Remove any default margin */
-  padding: 0;  /* Remove any default padding */
+  font-size: 1rem;
+  /* Increased size */
+  font-weight: bold;
+  /* Bold font */
+  color: rgb(255, 255, 255);
+  /* White text */
+  margin: 0;
+  /* Remove any default margin */
+  padding: 0;
+  /* Remove any default padding */
 }
 
 .time-display-left {
@@ -202,9 +253,11 @@ button.upload-button:hover {
   0% {
     backdrop-filter: blur(20px) brightness(0.5);
   }
+
   50% {
-    backdrop-filter: blur(20px) brightness(.95);
+    backdrop-filter: blur(20px) brightness(0.95);
   }
+
   100% {
     backdrop-filter: blur(20px) brightness(0.5);
   }
@@ -226,10 +279,9 @@ button.upload-button:hover {
   font-size: 24px;
   /* animation: pulse 4s infinite; */
   display: flex;
-  justify-content: center;  
+  justify-content: center;
   align-items: center;
 }
-
 
 .centered {
   position: absolute;
@@ -240,7 +292,8 @@ button.upload-button:hover {
   margin: auto;
   width: fit-content;
   height: fit-content;
-  text-align: center; /* This will center inline-block elements */
+  text-align: center;
+  /* This will center inline-block elements */
 }
 
 /* Common styles for all spinners */
@@ -278,51 +331,92 @@ button.upload-button:hover {
   animation-duration: 2s;
 }
 
-
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes shake {
-  0% { transform: translate(1px, 1px) rotate(0deg); }
-  10% { transform: translate(-1px, -2px) rotate(-1deg); }
-  20% { transform: translate(-3px, 0px) rotate(1deg); }
-  30% { transform: translate(3px, 2px) rotate(0deg); }
-  40% { transform: translate(1px, -1px) rotate(1deg); }
-  50% { transform: translate(-1px, 2px) rotate(-1deg); }
-  60% { transform: translate(-3px, 1px) rotate(0deg); }
-  70% { transform: translate(3px, 1px) rotate(-1deg); }
-  80% { transform: translate(-1px, -1px) rotate(1deg); }
-  90% { transform: translate(1px, 2px) rotate(0deg); }
-  100% { transform: translate(1px, -2px) rotate(-1deg); }
+  0% {
+    transform: translate(1px, 1px) rotate(0deg);
+  }
+
+  10% {
+    transform: translate(-1px, -2px) rotate(-1deg);
+  }
+
+  20% {
+    transform: translate(-3px, 0px) rotate(1deg);
+  }
+
+  30% {
+    transform: translate(3px, 2px) rotate(0deg);
+  }
+
+  40% {
+    transform: translate(1px, -1px) rotate(1deg);
+  }
+
+  50% {
+    transform: translate(-1px, 2px) rotate(-1deg);
+  }
+
+  60% {
+    transform: translate(-3px, 1px) rotate(0deg);
+  }
+
+  70% {
+    transform: translate(3px, 1px) rotate(-1deg);
+  }
+
+  80% {
+    transform: translate(-1px, -1px) rotate(1deg);
+  }
+
+  90% {
+    transform: translate(1px, 2px) rotate(0deg);
+  }
+
+  100% {
+    transform: translate(1px, -2px) rotate(-1deg);
+  }
 }
 
 .shake {
-  animation: shake 0.82s cubic-bezier(.36,.07,.19,.97) both;
+  animation: shake 0.82s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
 
 /* Add this to your CSS file */
 .mode-poshold {
-  background-color: rgba(255, 255, 0, 0.8) !important; /* Yellow with 0.7 opacity */
+  background-color: rgba(255, 255, 0, 0.8) !important;
+  /* Yellow with 0.7 opacity */
   color: black !important;
 }
 
 .mode-stabilize {
-  background-color: rgba(0, 128, 0, 0.8) !important; /* Green with 0.7 opacity */
+  background-color: rgba(0, 128, 0, 0.8) !important;
+  /* Green with 0.7 opacity */
   color: white !important;
 }
 
 .mode-rtl {
-  background-color: rgba(255, 0, 0, 0.8) !important; /* Red with 0.7 opacity */
+  background-color: rgba(255, 0, 0, 0.8) !important;
+  /* Red with 0.7 opacity */
   color: white !important;
 }
 
 #loadingImage {
-  position: fixed; /* Fixed position */
-  bottom: 0;       /* Place it at the bottom */
-  left: 50%;       /* Center the image */
-  transform: translate(-50%, 10px); /* Account for half of the image's width */
-  z-index: 9999;   /* Make sure it's on top of other elements */
+  position: fixed;
+  /* Fixed position */
+  bottom: 0;
+  /* Place it at the bottom */
+  left: 50%;
+  /* Center the image */
+  transform: translate(-50%, 10px);
+  /* Account for half of the image's width */
+  z-index: 9999;
+  /* Make sure it's on top of other elements */
 }
 
 .status-queue {
@@ -333,42 +427,52 @@ button.upload-button:hover {
   backdrop-filter: blur(20px);
   background: #61616134;
   border-radius: 5px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  color: #ffffff; /* White text color */
-  overflow-y: hidden; /* Hide overflow */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  color: #ffffff;
+  /* White text color */
+  overflow-y: hidden;
+  /* Hide overflow */
 }
 
 .status-message {
   padding: 10px;
   margin-bottom: 5px;
-  background: #404448; /* Slightly darker slate blue background for contrast */
+  background: #404448;
+  /* Slightly darker slate blue background for contrast */
   /* border-left: 4px solid #5cb4b8; Color indicator on the side */
-  border-left: 4px solid; /* No color specified here */
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  border-left: 4px solid;
+  /* No color specified here */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   border-radius: 3px;
-  opacity: 0; /* Start fully transparent */
-  transform: translateY(20px); /* Start shifted down */
-  transition: opacity 0.5s ease-out, transform 0.5s ease-out; /* Smooth transition for fade-in and shift */
-  font-family: 'Open Sans', sans-serif;
+  opacity: 0;
+  /* Start fully transparent */
+  transform: translateY(20px);
+  /* Start shifted down */
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+  /* Smooth transition for fade-in and shift */
+  font-family: "Open Sans", sans-serif;
 }
 
 .status-message:hover {
-  background: #506372; /* Darken on hover */
+  background: #506372;
+  /* Darken on hover */
   cursor: pointer;
 }
 
 /* Initial animation for new messages */
 @keyframes slideFadeIn {
   from {
-      opacity: 0;
-      transform: translateX(-20px); /* Start from below */
+    opacity: 0;
+    transform: translateX(-10px);
+    /* Start from below */
   }
+
   to {
-      opacity: 1;
-      transform: translateY(0); /* End at normal position */
+    opacity: 1;
+    transform: translateY(0);
+    /* End at normal position */
   }
 }
-
 
 .progress-container {
   background: #8b8a9b70;
@@ -384,44 +488,60 @@ button.upload-button:hover {
   text-align: center;
   border-radius: 5px;
   width: 0%;
-  transition: width 0.04s ease-in-out;
+  transition: width 0.2s ease-in-out;
 }
 
 .loadingHeader {
-  display: inline-block; /* Make the width fit the content */
+  display: inline-block;
+  /* Make the width fit the content */
   background: #61616134;
-  color: white; /* Light colored text */
-  border-radius: 10px; /* Rounded corners */
-  backdrop-filter: blur(5px); /* Frosted glass effect */
-  padding: 10px 20px; /* Padding around the text */
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Subtle shadow for depth */
-  margin-bottom: 20px; /* Space below the header */
-  text-align: center; /* Center the text */
+  color: white;
+  /* Light colored text */
+  border-radius: 10px;
+  /* Rounded corners */
+  backdrop-filter: blur(5px);
+  /* Frosted glass effect */
+  padding: 10px 20px;
+  /* Padding around the text */
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  /* Subtle shadow for depth */
+  margin-bottom: 20px;
+  /* Space below the header */
+  text-align: center;
+  /* Center the text */
 }
 
 .loadingHeaderText {
-  margin: 0; /* Remove default margin */
-  padding: 5px 0; /* Smaller padding on top and bottom */
-  font-size: 1.1em; /* Adjust font size if necessary */
+  margin: 0;
+  /* Remove default margin */
+  padding: 5px 0;
+  /* Smaller padding on top and bottom */
+  font-size: 1.1em;
+  /* Adjust font size if necessary */
 }
 
 #randomMessage {
-  margin: 0; /* Remove default margin */
-  padding: 5px 0; /* Smaller padding on top and bottom */
-  font-size: 1em; /* Adjust font size if necessary */
+  margin: 0;
+  /* Remove default margin */
+  padding: 5px 0;
+  /* Smaller padding on top and bottom */
+  font-size: 1em;
+  /* Adjust font size if necessary */
 }
 
 /* File List Container styles */
 #fileListContainer {
-  height: 100%;
+  height: calc(95vh - 275px);
   min-width: 0px;
   width: 240px;
-  overflow-y: auto; /* Handle vertical overflow */
+  overflow-y: auto;
+  /* Handle vertical overflow */
   background-color: rgba(48, 48, 48, 0.8);
   padding: 10px;
   border-radius: 10px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-  color: white; /* Text color */
+  color: white;
+  /* Text color */
 
   /* Hide scrollbar for Webkit browsers */
   &::-webkit-scrollbar {
@@ -429,8 +549,10 @@ button.upload-button:hover {
   }
 
   /* Hide scrollbar for IE, Edge, and Firefox */
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
 }
 
 /* For Firefox */
@@ -443,20 +565,24 @@ button.upload-button:hover {
   -ms-overflow-style: none;
 }
 
-
 /* Style for each file box */
 .file-box {
-  display: flex; /* Use flexbox layout */
-  align-items: center; /* Align items vertically in the center */
-  gap: 10px; /* Space between items */
+  display: flex;
+  /* Use flexbox layout */
+  align-items: center;
+  /* Align items vertically in the center */
+  gap: 10px;
+  /* Space between items */
   padding: 8px;
   margin-bottom: 8px;
-  background-color: rgba(255, 255, 255, 0.1); /* Slightly visible background */
-  border: 1px solid rgba(255, 255, 255, 0.2); /* Subtle border */
+  background-color: rgba(255, 255, 255, 0.1);
+  /* Slightly visible background */
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  /* Subtle border */
   cursor: pointer;
   border-radius: 5px;
   transition: background-color 0.3s ease;
-  
+
   /* Prevent text overflow */
   overflow: hidden;
   text-overflow: ellipsis;
@@ -466,40 +592,82 @@ button.upload-button:hover {
 /* Style for the text container within the file box */
 .text-container {
   display: flex;
-  flex-direction: column; /* Stack text elements vertically */
+  flex-direction: column;
+  /* Stack text elements vertically */
   max-width: 100px;
 }
 
+/* Define the continuous flow animation */
+@keyframes flowColor {
+	0%, 100% {
+		background-position: 0% 50%;
+	}
+	50% {
+		background-position: 100% 50%;
+	}
+}
+
+/* Apply the animation to the loaded file box */
+.file-box.loaded {
+  border-color: #e3e3e3;
+  /* Create a linear gradient at an angle */
+    background-image: linear-gradient(-45deg, #ff6f61, #f06292, #ba68c8, #9575cd, #64b5f6);
+  background-size: 300% 300%; /* Increase the size of the gradient background */
+  animation: flowColor 6s ease infinite;
+}
+
+
+
 .file-box.bin {
-  border-color: #ADD8E6; /* Light Blue for .bin files */
-  background-color: rgba(173, 216, 230, 0.2); /* Light Blue with transparency */
+  border-color: #808080;
+  /* Grey border for .bin files */
+  background-color: rgba(128, 128, 128, 0.2);
+  /* Grey background with transparency */
 }
 
 .file-box.xlsx {
-  border-color: #90EE90; /* Light Green for .xlsx files */
-  background-color: rgba(144, 238, 144, 0.2); /* Light Green with transparency */
+  border-color: #90ee90;
+  /* Light Green for .xlsx files */
+  background-color: rgba(144, 238, 144, 0.2);
+  /* Light Green with transparency */
 }
 
 .file-box.h5 {
-  border-color: #FFA500; /* Orange for .h5 files */
-  background-color: rgba(255, 165, 0, 0.2); /* Orange with transparency */
+  border-color: #ffa500;
+  /* Orange for .h5 files */
+  background-color: rgba(255, 165, 0, 0.2);
+  /* Orange with transparency */
+}
+
+.file-box.pkl {
+  border-color: #8A2BE2; /* Purple for .pkl files */
+  background-color: rgba(138, 43, 226, 0.2); /* Purple with transparency */
+}
+
+.file-box.pkl:hover {
+  background-color: rgba(138, 43, 226, 0.3); /* Slightly darker Purple on hover */
 }
 
 .file-box:hover {
-  background-color: rgba(255, 255, 255, 0.2); /* Darker on hover */
+  background-color: rgba(255, 255, 255, 0.2);
+  /* Darker on hover */
 }
 
 .file-box.xlsx:hover {
-  background-color: rgba(144, 238, 144, 0.3); /* Slightly darker Light Green on hover */
+  background-color: rgba(144, 238, 144, 0.3);
+  /* Slightly darker Light Green on hover */
 }
 
 .file-box.h5 {
-  border-color: #FFA500; /* Orange for .h5 files */
-  background-color: rgba(255, 165, 0, 0.2); /* Orange with transparency */
+  border-color: #ffa500;
+  /* Orange for .h5 files */
+  background-color: rgba(255, 165, 0, 0.2);
+  /* Orange with transparency */
 }
 
 .file-box.h5:hover {
-  background-color: rgba(255, 165, 0, 0.3); /* Slightly darker Orange on hover */
+  background-color: rgba(255, 165, 0, 0.3);
+  /* Slightly darker Orange on hover */
 }
 
 .load-btn {
@@ -508,7 +676,17 @@ button.upload-button:hover {
   font-size: 12px;
   flex-shrink: 0;
   cursor: pointer;
-  margin-left: auto; /* Push the button to the right */
+  margin-left: auto;
+  /* Push the button to the right */
+}
+
+.load-btn.disabled {
+  color: #a0a0a0;
+  /* Grey text color */
+  cursor: not-allowed;
+  /* Change cursor to indicate disabled state */
+  background-color: #f0f0f0;
+  /* Light grey background */
 }
 
 .header {
@@ -527,12 +705,216 @@ button.upload-button:hover {
 .header-file-info {
   display: flex;
   justify-content: flex-end;
-  gap: 20px; /* Space between items */
+  gap: 20px;
+  /* Space between items */
   background-color: rgba(48, 48, 48, 0.8);
   padding: 10px;
   border-radius: 5px;
 }
 
 .header-file-info p {
-  margin: 0; /* Remove default margins */
+  margin: 0;
+  /* Remove default margins */
+}
+
+.drag-drop-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(-45deg,
+      #ee775241,
+      #e73c7e41,
+      #23a6d541,
+      #23d5ab41);
+  background-size: 400% 400%;
+  animation: gradientBG 8s ease-in-out infinite;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: blur(10px);
+  /* Blur effect */
+  -webkit-backdrop-filter: blur(10px);
+  /* For WebKit browsers */
+  z-index: 1000;
+}
+
+.overlay-content {
+  padding: 20px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  /* Semi-transparent black background */
+  color: white;
+  font-size: 1.5em;
+  text-align: center;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+@keyframes gradientBG {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* General modal styling */
+.modal {
+  display: none; /* Hidden by default */
+  position: fixed; /* Stay in place */
+  z-index: 10; /* Sit on top */
+  left: 0;
+  top: 0;
+  width: 100%; /* Full width */
+  height: 100%; /* Full height */
+  overflow: auto; /* Enable scroll if needed */
+  background-color: rgba(0, 0, 0, 0.6); /* Black with opacity */
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.modal-content {
+  /* Updated styles for overall modal content */
+  background-color: #222;
+  margin: 10% auto;
+  padding: 20px;
+  border: 1px solid #444;
+  width: 50%;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2), 0 6px 20px 0 rgba(0,0,0,0.19);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 20px; /* Space between header and content */
+  border-bottom: 1px solid #444; /* Border under the header */
+}
+
+.close-button {
+  color: #aaa;
+  float: right;
+  font-size: 28px;
+  font-weight: bold;
+}
+
+.close-button:hover,
+.close-button:focus {
+  color: #ccc;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+
+.selection-controls {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-left: 20px;
+}
+
+.select-buttons {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px;
+}
+
+
+.select-buttons, .file-types-checkboxes {
+  width: 95%;
+}
+
+
+/* Styling for file types checkboxes */
+
+.file-types-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #444; /* Border around checkboxes for clear separation */
+  overflow-y: auto;
+}
+
+.file-types-checkboxes div {
+  display: flex;
+  align-items: center;
+}
+
+.file-types-checkboxes label {
+  margin-left: 5px;
+  font-size: 14px;
+  color: #ddd; /* Light grey for readability */
+}
+
+.export-controls {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  border: 1px solid #444; /* Border around the export and selection controls */
+  padding: 10px;
+}
+
+.export-buttons {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Center buttons vertically */
+  border-right: 1px solid #444; /* Border between export buttons and selection controls */
+  padding-right: 20px;
+}
+
+.export-buttons button, .select-buttons button {
+  width: 100%; /* Make buttons full width within their containers */
+  margin-bottom: 10px; /* Space between buttons */
+}
+/* Select All and Select None button specific styling */
+#selectAll:hover, #selectNone:hover {
+  background-color: #555;
+}
+
+/* Select All and Select None button specific styling */
+#selectAll, #selectNone {
+  background-color: #575757; /* Slightly different to distinguish */
+  margin: 0 10px; /* Space between buttons */
+}
+
+/* Enhancements for accessibility and interaction */
+input[type="checkbox"]:focus + label {
+  outline: 1px dashed #aaa; /* Focus indicator */
+}
+
+/* Ensure the modal is responsive to various screen sizes */
+@media (max-width: 768px) {
+  .modal-content {
+    width: 80%;
+  }
+
+  .export-controls {
+    flex-direction: column;
+  }
+
+  .export-buttons {
+    border-right: none;
+    border-bottom: 1px solid #444; /* Adjust border for responsive layout */
+    padding-right: 0;
+    padding-bottom: 20px;
+  }
+
+  .selection-controls {
+    padding-left: 0;
+    padding-top: 20px;
+  }
 }

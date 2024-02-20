@@ -8,14 +8,17 @@ from flask import (
     Response,
 )
 from math import radians, cos, sin, asin, sqrt
+from collections import defaultdict, Counter
 from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO, emit
-from collections import defaultdict, Counter
+from scipy.interpolate import interp1d
 from pymavlink import mavutil
+from functools import reduce
 from flask_cors import CORS
 import simplejson as json
 import datetime as dt
 import pandas as pd
+import numpy as np
 import requests
 import datetime
 import time
@@ -68,6 +71,63 @@ global_parsed_data = {}
 df = pd.DataFrame()
 current_excel_file = None
 current_bin_file = None
+
+
+import pandas as pd
+import os
+import time
+
+def save_all_dataframes(data_frames, bin_file_path, output_folder='./temp_df'):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    base_name = os.path.splitext(os.path.basename(bin_file_path))[0]
+    file_path = os.path.join(output_folder, f'{base_name}.pkl')
+
+    # Prepare the data for saving
+    prepared_data = {}
+    for packet_type, data in data_frames.items():
+        if isinstance(data, list):
+            prepared_data[packet_type] = pd.DataFrame(data)
+        elif isinstance(data, pd.DataFrame):
+            prepared_data[packet_type] = data
+        else:
+            print(f"Skipping {packet_type}: Not a list or DataFrame.")
+            continue
+
+    try:
+        start_time = time.time()
+
+        with open(file_path, 'wb') as file:
+            pd.to_pickle(prepared_data, file)
+
+        end_time = time.time()
+        print(f"All DataFrames saved in {end_time - start_time:.2f} seconds to {output_folder}.")
+    except Exception as e:
+        print(f"Error occurred while saving DataFrames: {e}")
+
+
+def load_all_dataframes(bin_file_path):
+    folder_path = './temp_df'
+    base_name = os.path.splitext(os.path.basename(bin_file_path))[0]
+    file_path = os.path.join(folder_path, f'{base_name}.pkl')
+
+    if not os.path.exists(file_path):
+        print(f"No saved DataFrames found for {bin_file_path}")
+        return {}, False
+
+    try:
+        start_time = time.time()
+
+        with open(file_path, 'rb') as file:
+            data_frames = pd.read_pickle(file)
+
+        end_time = time.time()
+        print(f"All DataFrames loaded in {end_time - start_time:.2f} seconds.")
+        return data_frames, True
+    except Exception as e:
+        print(f"Error occurred while loading DataFrames: {e}")
+        return {}, False
 
 
 def haversine_distance(lat1, lon1, lat2, lon2, axis):
@@ -255,9 +315,127 @@ def determine_key_for_packet(msg_dict):
 
     return key
 
+def resample_to_50hz(input_df, new_time_series, kind='linear'):
+    """
+    Resample a dataframe to 50Hz using interpolation, ignoring non-numeric columns.
+
+    :param input_df: DataFrame to resample.
+    :param new_time_series: The target time series (50Hz), should be a numeric array.
+    :param kind: The type of interpolation (default is linear).
+    :return: Resampled DataFrame.
+    """
+    # Ensure the new time series is a numeric array
+    new_time_series = np.asarray(new_time_series, dtype=np.float64)
+
+    # Filter out non-numeric columns (excluding 'Unix_Epoch_Time')
+    numeric_cols = input_df.select_dtypes(include=[np.number]).columns.tolist()
+    if 'Unix_Epoch_Time' in input_df.columns and 'Unix_Epoch_Time' not in numeric_cols:
+        numeric_cols.append('Unix_Epoch_Time')
+
+    numeric_df = input_df[numeric_cols]
+
+    # Create a copy to avoid SettingWithCopyWarning
+    numeric_df = numeric_df.copy()
+
+    # Ensure Unix_Epoch_Time is numeric
+    numeric_df.loc[:, 'Unix_Epoch_Time'] = pd.to_numeric(numeric_df['Unix_Epoch_Time'], errors='coerce')
+
+    # Drop rows with NaN in 'Unix_Epoch_Time' after conversion
+    numeric_df = numeric_df.dropna(subset=['Unix_Epoch_Time'])
+
+    # Creating an interpolation function for each numeric column
+    interp_funcs = {col: interp1d(numeric_df['Unix_Epoch_Time'], numeric_df[col], kind=kind, fill_value='extrapolate') 
+                    for col in numeric_df.columns if col != 'Unix_Epoch_Time'}
+
+    # Applying the interpolation function to the new time series
+    resampled_data = {col: interp_funcs[col](new_time_series) for col in interp_funcs}
+
+    # Creating the new DataFrame
+    resampled_df = pd.DataFrame(resampled_data)
+    resampled_df['Unix_Epoch_Time'] = new_time_series
+
+    return resampled_df
+
+
+
+def find_nearest(array, values):
+    """
+    Find the nearest value in 'array' for each value in 'values'.
+
+    :param array: Sorted numpy array to search.
+    :param values: Values for which to find the nearest in 'array'.
+    :return: A list of indices representing the nearest value in 'array'.
+    """
+    nearest_indices = []
+    array = np.asarray(array)
+
+    for value in values:
+        idx = np.searchsorted(array, value, side="left")
+
+        if idx == 0:
+            nearest_indices.append(idx)
+        elif idx == len(array):
+            nearest_indices.append(idx - 1)
+        else:
+            left_diff = np.abs(value - array[idx - 1])
+            right_diff = np.abs(value - array[idx])
+
+            if left_diff <= right_diff:
+                nearest_indices.append(idx - 1)
+            else:
+                nearest_indices.append(idx)
+
+    return nearest_indices
+
+
+
+
+def create_50hz_dataframe(global_parsed_data):
+    packet_types = ["IMU_0", "IMU_1", "RATE", "ATT", "XKF1_0", "XKF5_0", "XKF1_1", "RCOU", "BARO", "GPS"]
+
+    min_time = min(global_parsed_data[ptype]['Unix_Epoch_Time'].min() for ptype in packet_types if ptype in global_parsed_data)
+    max_time = max(global_parsed_data[ptype]['Unix_Epoch_Time'].max() for ptype in packet_types if ptype in global_parsed_data)
+
+    # Floor the min_time to the nearest 20ms and generate the new time series
+    floored_min_time = np.floor(min_time / 0.02) * 0.02
+    # Generate the new time series and explicitly convert to a float type
+    new_time_series = np.round(np.arange(floored_min_time, np.floor(max_time / 0.02) * 0.02, 0.02), 2)
+    new_time_series = new_time_series.astype(np.float64)
+
+    df_50hz = pd.DataFrame(new_time_series, columns=['Unix_Epoch_Time'])
+
+    for ptype in packet_types:
+        if ptype in global_parsed_data:
+            print(f"Processing {ptype}...")
+
+            input_df = global_parsed_data[ptype]
+
+            # Remove 'mavpackettype' column if it exists
+            if 'mavpackettype' in input_df.columns:
+                input_df = input_df.drop(columns=['mavpackettype'])
+
+            # Rename columns to avoid conflicts, except for 'Unix_Epoch_Time'
+            input_df = input_df.rename(columns=lambda x: f"{ptype}_{x}" if x != 'Unix_Epoch_Time' else x)
+
+            resampled_df = resample_to_50hz(input_df, df_50hz['Unix_Epoch_Time'], kind='linear')
+
+            # Ensure no overlapping columns other than 'Unix_Epoch_Time'
+            common_cols = df_50hz.columns.intersection(resampled_df.columns)
+            common_cols = common_cols.drop('Unix_Epoch_Time')
+            if not common_cols.empty:
+                resampled_df = resampled_df.drop(columns=common_cols)
+
+            # Merge with the main DataFrame
+            df_50hz = df_50hz.merge(resampled_df, on='Unix_Epoch_Time', how='left')
+
+            print(f"Finished processing {ptype}.")
+
+    return df_50hz
 
 def convert_bin_to_json(bin_file_path):
     global global_parsed_data
+    # Clear the global_parsed_data before loading new data
+    global_parsed_data = {}
     global allowed_export_packet_types
     allowed_packet_types = ["XKF1", "XKF5", "IMU", "GPS", "RCOU", "MODE"]
     mlog = mavutil.mavlink_connection(bin_file_path)
@@ -286,8 +464,8 @@ def convert_bin_to_json(bin_file_path):
 
         if packet_type in allowed_export_packet_types:
             key = determine_key_for_packet(msg_dict)
-            if key not in global_parsed_data:
-                global_parsed_data[key] = []
+            if key not in global_parsed_data or not isinstance(global_parsed_data[key], list):
+                global_parsed_data[key] = []  # Ensure it's a list
             global_parsed_data[key].append(msg_dict)
 
         if packet_type in allowed_packet_types:
@@ -347,6 +525,35 @@ def convert_bin_to_json(bin_file_path):
                 },
                 broadcast=True,
             )
+
+    # Add closest GPS time to each DataFrame
+    gps_data = global_parsed_data.get("GPS", [])
+    if gps_data:
+        gps_df = pd.DataFrame(gps_data)  # Convert the list to DataFrame
+        gps_df["Unix_Epoch_Time"] = gps_df.apply(calculate_unix_epoch_time, axis=1)
+        initial_unix_epoch_time = gps_df["Unix_Epoch_Time"].iloc[0]
+        initial_time_us = gps_df["TimeUS"].iloc[0]
+
+        for packet_type, data in global_parsed_data.items():
+            if isinstance(data, list):  # Check if the data is a list
+                df = pd.DataFrame(data)  # Convert list to DataFrame
+            else:
+                df = data  # If it's already a DataFrame, use it directly
+
+            df["Unix_Epoch_Time"] = df["TimeUS"].apply(
+                lambda x: calculate_unix_epoch_time_for_record(
+                    x, initial_unix_epoch_time, initial_time_us
+                )
+            )
+            global_parsed_data[packet_type] = df  # Update the dictionary with the modified DataFrame
+
+    # Create the "50HZ" dataframe
+    df_50hz = create_50hz_dataframe(global_parsed_data)
+
+    # Append "50HZ" dataframe to global_parsed_data
+    global_parsed_data["50HZ"] = df_50hz
+
+    save_all_dataframes(global_parsed_data, bin_file_path)
 
     emit(
         "status",
@@ -425,15 +632,31 @@ def convert_bin_to_json(bin_file_path):
     json_output["file_info"] = fileInfo
 
     save_json(json_output, bin_file_path)
-
+    
+import math
+import json
 
 def save_json(data, bin_file_path):
     base_name = os.path.basename(bin_file_path)
     json_filename = f"{os.path.splitext(base_name)[0]}.json"
     file_path = os.path.join(UPLOAD_FOLDER, json_filename)
 
+    # Function to recursively replace non-compliant float values
+    def replace_invalid_value(item):
+        if isinstance(item, float):
+            if math.isnan(item) or math.isinf(item):
+                return None  # Replace NaN or inf with None
+        elif isinstance(item, dict):
+            return {k: replace_invalid_value(v) for k, v in item.items()}
+        elif isinstance(item, list):
+            return [replace_invalid_value(elem) for elem in item]
+        return item
+
+    # Apply the replacement to the entire data
+    processed_data = replace_invalid_value(data)
+
     with open(file_path, "w") as f:
-        json.dump(data, f)
+        json.dump(processed_data, f)
 
     global current_json_file
     current_json_file = file_path
@@ -446,8 +669,10 @@ def calculate_unix_epoch_time(row):
 
 
 def convert_bin_to_export(
-    bin_file_path, export_file_path, start_time_unix, end_time_unix, file_format="excel"
+    bin_file_path, export_file_path, start_time_unix, end_time_unix, file_format="excel", file_types=[]
 ):
+    start_time = time.time()
+
     print(f"bin_file_path: {bin_file_path}")
     print(f"export_file_path: {export_file_path}")
     print(f"start_time_unix: {start_time_unix}")
@@ -483,6 +708,9 @@ def convert_bin_to_export(
 
     global global_parsed_data
 
+    # Clear the global_parsed_data before loading new data
+    global_parsed_data = {}
+
     emit(
         "status",
         {"message": "Starting conversion...", "progress": 0, "color": "#FFD700"},
@@ -495,9 +723,11 @@ def convert_bin_to_export(
     packet_type_counter = Counter()  # For detailed packet type counts
     batch_size = 100000  # Update the progress every 100000 packets
 
-    # Check if global_parsed_data has the required data
-    if not global_parsed_data:
-        print("dataframes not in memory. Loading...")
+    global_parsed_data, files_loaded = load_all_dataframes(bin_file_path)
+    if not files_loaded:
+    # Check if global_parsed_data has the required data and is not empty
+    # if not global_parsed_data or all(len(df) == 0 for df in global_parsed_data.values()):
+        print("DataFrames not in memory or they are empty. Loading...")
 
         # Parse the messages and build the data structure
         while True:
@@ -512,8 +742,8 @@ def convert_bin_to_export(
 
             if packet_type in allowed_export_packet_types:
                 key = determine_key_for_packet(msg_dict)
-                if key not in global_parsed_data:
-                    global_parsed_data[key] = []
+                if key not in global_parsed_data or not isinstance(global_parsed_data[key], list):
+                    global_parsed_data[key] = []  # Ensure it's a list
                 global_parsed_data[key].append(msg_dict)
 
             # Calculate current progress
@@ -540,19 +770,19 @@ def convert_bin_to_export(
                     {
                         "message": f"Imported {packet_count_formatted} packets... ({progress_percentage}%)",
                         "packet_types": dict(packet_type_counter),
-                        "progress": scaled_progress,
+                        "progress": 0,
                         "color": "#1E90FF",
                     },
                     broadcast=True,
                 )
 
+        save_all_dataframes(global_parsed_data, bin_file_path)
+
         emit(
             "status",
             {
                 "message": f"MAVLink packets imported.",
-                "progress": 20
-                if file_format == "excel"
-                else 80,  # Scale final progress
+                "progress": 0,
                 "color": "#32CD32",
             },
             broadcast=True,
@@ -561,40 +791,51 @@ def convert_bin_to_export(
         emit(
             "status",
             {
-                "message": f"MAVLink packets are still in memory, quick export!",
-                "progress": 20
-                if file_format == "excel"
-                else 80,  # Scale final progress
+                "message": f"Loaded Mavlink packets from backend file.",
+                "progress": 0,
                 "color": "#32CD32",
             },
             broadcast=True,
         )
 
     # Now create DataFrames in one go
-    data_frames = {}
-    for key, data_list in global_parsed_data.items():
-        # Create the DataFrame for this packet type and instance
-        data_frames[key] = pd.DataFrame(data_list).drop(
-            columns=["mavpackettype"], errors="ignore"
-        )
-
+    print("File types:")
+    print(file_types)
+        
+    if file_types is not None:  # Apply filtering only if file_types is explicitly provided
+        data_frames = {key: pd.DataFrame(data_list).drop(columns=["mavpackettype"], errors="ignore") for key, data_list in global_parsed_data.items() if key in file_types}
+        print("Available file types:")
+        for key in data_frames.keys():
+            print(key)
+    else:
+        # Include all data if file_types is None
+        data_frames = {key: pd.DataFrame(data_list).drop(columns=["mavpackettype"], errors="ignore") for key, data_list in global_parsed_data.items()}
+    
     # Add closest GPS time to each DataFrame
-    gps_df = data_frames.get("GPS", pd.DataFrame())
-    if not gps_df.empty:
-        gps_df["Unix_Epoch_Time"] = gps_df.apply(calculate_unix_epoch_time, axis=1)
-        initial_unix_epoch_time = gps_df["Unix_Epoch_Time"].iloc[0]
-        initial_time_us = gps_df["TimeUS"].iloc[0]
-        for packet_type, df in data_frames.items():
-            df["Unix_Epoch_Time"] = df["TimeUS"].apply(
-                lambda x: calculate_unix_epoch_time_for_record(
-                    x, initial_unix_epoch_time, initial_time_us
-                )
-            )
+    # gps_df = data_frames.get("GPS", pd.DataFrame())
+    # if not gps_df.empty:
+    #     gps_df["Unix_Epoch_Time"] = gps_df.apply(calculate_unix_epoch_time, axis=1)
+    #     initial_unix_epoch_time = gps_df["Unix_Epoch_Time"].iloc[0]
+    #     initial_time_us = gps_df["TimeUS"].iloc[0]
+    #     for packet_type, df in data_frames.items():
+    #         df["Unix_Epoch_Time"] = df["TimeUS"].apply(
+    #             lambda x: calculate_unix_epoch_time_for_record(
+    #                 x, initial_unix_epoch_time, initial_time_us
+    #             )
+    #         )
 
     # Fetch Weather Data
-    min_time = gps_df["Unix_Epoch_Time"].min() if not gps_df.empty else None
+    gps_df = data_frames.get("GPS", pd.DataFrame())
+    min_time = gps_df["Unix_Epoch_Time"].min() - 900 if not gps_df.empty else None
     max_time = gps_df["Unix_Epoch_Time"].max() + 900 if not gps_df.empty else None
     # weather_data, _ = fetch_weather_data(min_time, max_time) if min_time and max_time else ([], False)
+
+    # Debugging: Print each DataFrame, its columns, and row count
+    for key, df in data_frames.items():
+        print(f"DataFrame for {key}:")
+        print(f"    Columns: {df.columns.tolist()}")
+        print(f"    Number of Rows: {len(df)}")
+        print("\n")
 
     # Fetching weather data and calculating average temperature
     weather_data, success = (
@@ -645,14 +886,57 @@ def convert_bin_to_export(
 
         data_frames["BARO"] = baro_df  # Update the BARO DataFrame in the dictionary
 
+    # Assume 'data_frames' is your dictionary of DataFrames and 'bin_file_path' is the path of the bin file
+    # save_dataframes(data_frames, bin_file_path)
+    # Assume 'bin_file_path' is the path of the bin file
+    # data_frames = load_dataframes(bin_file_path)
+
+    # Debugging: Print each DataFrame, its columns, row count, and Unix_Epoch_Time range
+    for key, df in data_frames.items():
+        print(f"DataFrame for {key}:")
+        print(f"    Columns: {df.columns.tolist()}")
+        print(f"    Number of Rows: {len(df)}")
+        
+        # Check if 'Unix_Epoch_Time' column exists and print its start and end values
+        if 'Unix_Epoch_Time' in df.columns:
+            start_time = df['Unix_Epoch_Time'].iloc[0] if not df.empty else "DataFrame is empty"
+            end_time = df['Unix_Epoch_Time'].iloc[-1] if not df.empty else "DataFrame is empty"
+            print(f"    Start Unix Epoch Time: {start_time}")
+            print(f"    End Unix Epoch Time: {end_time}")
+        else:
+            print("    Column 'Unix_Epoch_Time' not found in this DataFrame")
+
+        print("\n")
+
+    def unix_to_human_readable(unix_time):
+        return datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+
     # Filter DataFrames based on Unix_Epoch_Time
     for packet_type, df in data_frames.items():
+        # Print the start and end time in human-readable format
+        print(f"Filtering {packet_type} DataFrame")
+        print(f"Start time (Unix): {start_time_unix} ({unix_to_human_readable(start_time_unix)})")
+        print(f"End time (Unix): {end_time_unix} ({unix_to_human_readable(end_time_unix)})")
+        
         # Filter DataFrame rows where Unix_Epoch_Time is between start_time_unix and end_time_unix
         df_filtered = df[
             (df["Unix_Epoch_Time"] >= start_time_unix)
             & (df["Unix_Epoch_Time"] <= end_time_unix)
         ]
+        
+        # Print the start and end time of the DataFrame before filtering
+        if not df.empty:
+            print(f"DataFrame Start time: {unix_to_human_readable(df['Unix_Epoch_Time'].iloc[0])}")
+            print(f"DataFrame End time: {unix_to_human_readable(df['Unix_Epoch_Time'].iloc[-1])}")
+        else:
+            print("DataFrame is empty.")
+
+        # Print the number of packets in the resulting filtered dataframe
+        print(f"Number of packets after filtering: {len(df_filtered)}\n")
+
+        # Update the dataframe in the dictionary
         data_frames[packet_type] = df_filtered
+
 
     # Calculate the total number of rows across all DataFrames
     total_rows = sum(len(df) for df in data_frames.values())
@@ -665,12 +949,12 @@ def convert_bin_to_export(
                 rows_written += len(df)
 
                 # Calculate progress percentage
-                progress_percentage = int((rows_written / total_rows) * 100)
+                progress_percentage = int((rows_written / total_rows) * 100) if total_rows > 0 else 0
                 emit(
                     "status",
                     {
                         "message": f"Writing {packet_type} to Excel... ({progress_percentage}%)",
-                        "progress": 20 + progress_percentage * 0.8,
+                        "progress": progress_percentage,
                         "color": "#20B2AA",
                     },
                     broadcast=True,
@@ -682,30 +966,58 @@ def convert_bin_to_export(
             for packet_type, df in data_frames.items():
                 rows_written += len(df)
 
-                # Calculate progress percentage
-                progress_percentage = int((rows_written / total_rows) * 100)
+                progress_percentage = int((rows_written / total_rows) * 100) if total_rows > 0 else 0
+
                 emit(
                     "status",
                     {
                         "message": f"Writing {packet_type} to HDF5... ({progress_percentage}%)",
-                        "progress": 90 * progress_percentage / 100,
+                        "progress": progress_percentage,
                         "color": "#20B2AA",
                     },
                     broadcast=True,
                 )
                 hdf_store.put(packet_type, df, format="table", data_columns=True)
+    elif file_format == "pkl":
+        save_all_dataframes(data_frames, export_file_path, output_folder='./downloads')
+        emit(
+            "status",
+            {
+                "message": f"Writing done already! (pkl go brrr)",
+                "progress": 100,
+                "color": "#20B2AA",
+            },
+            broadcast=True,
+        )
     else:
         raise ValueError("Unsupported file format")
+    
+    end_time = time.time()
+    elapsed_time = end_time - start_time
 
+    # Calculate hours, minutes, and seconds
+    hours, rem = divmod(elapsed_time, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    # Build the time string based on the values of hours and minutes
+    if hours > 0:
+        time_str = "{:0>2}hr {:0>2}min {:05.2f}sec".format(int(hours), int(minutes), seconds)
+    elif minutes > 0:
+        time_str = "{:0>2}min {:05.2f}sec".format(int(minutes), seconds)
+    else:
+        time_str = "{:05.2f}sec".format(seconds)
+
+    # Include the time string in the final message
     emit(
         "status",
         {
-            "message": f"Data successfully saved to {file_format.upper()} file!",
+            "message": f"Data successfully saved to {file_format.upper()} file in {time_str}",
             "progress": 100,
             "color": "#32CD32",
         },
         broadcast=True,
     )
+
 
 
 def save_df_to_json(df):
@@ -837,7 +1149,7 @@ def handle_upload_and_convert(json_data):
 
     emit(
         "status",
-        {"message": "Bin File Upload Complete!", "progress": 100},
+        {"message": "Bin File Upload Complete!", "progress": 0},
         broadcast=True,
     )
 
@@ -998,6 +1310,7 @@ def get_data_as_csv():
 
 @socketio.on("export_data")
 def handle_export_data(json_data):
+    session_id = request.sid
     if not json_data:
         emit(
             "status", {"message": "No data provided", "progress": 0, "color": "#FF0000"}
@@ -1009,11 +1322,15 @@ def handle_export_data(json_data):
     end_time = json_data.get("end_time")
     raw_filename = json_data.get("filename", "exported_data.xlsx")
     file_format = json_data.get("format", "excel")  # Default to 'excel'
+    file_types = json_data.get("file_types", None)
+    print(f"File types in Export Data: {file_types}")
 
     if file_format == "excel":
         file_ext = ".xlsx"
     elif file_format == "hdf5":
         file_ext = ".h5"
+    elif file_format == "pkl":
+        file_ext = ".pkl"
     else:
         emit(
             "status",
@@ -1051,13 +1368,27 @@ def handle_export_data(json_data):
             start_time_unix,
             end_time_unix,
             file_format,
+            file_types=file_types,
         )
-        # Check if the Excel file was created successfully
+        # Check if the file was created successfully
         if os.path.exists(export_file_path):
+            # Broadcast the file export completion message
             emit(
                 "status",
-                {"message": "File Export Complete!", "progress": 0},
+                {
+                    "message": "File Export Complete!",
+                    "progress": 0,
+                    "color": "#32CD32",
+                },
                 broadcast=True,
+            )
+
+            # Send the download URL only to the client who initiated the export
+            download_url = f"/downloads/{filename}"  # Construct the download URL
+            emit(
+                "status",
+                {"message": f"Download your file at {download_url}", "url": download_url},
+                room=session_id,
             )
         else:
             emit(
@@ -1083,34 +1414,37 @@ def list_files_in_directory(directory):
     """List files in a given directory with URLs and sizes, sorted by modification time (newest first), excluding JSON files."""
     files = []
     for filename in os.listdir(directory):
-        if filename.endswith(".json"):
-            continue  # Skip JSON files
+        if filename.lower().endswith(".json"):
+            continue
 
         filepath = os.path.join(directory, filename)
         if os.path.isfile(filepath):
             file_stat = os.stat(filepath)
-            file_type = next(
-                (
-                    ext
-                    for ext in ["bin", "xlsx", "h5", "other"]
-                    if filename.endswith(f".{ext}")
-                ),
-                "other",
-            )
 
             # Convert mtime to datetime and localize to Chicago time zone
             mtime = datetime.datetime.fromtimestamp(
                 file_stat.st_mtime, pytz.timezone("America/Chicago")
             )
-            formatted_mtime = mtime.strftime("%m/%d/%Y %I:%M:%S %p")  # Format the time
+
+            file_ext = os.path.splitext(filename)[1].lower()  # Convert extension to lowercase
+
+            file_type = next(
+                (
+                    ext
+                    for ext in ["bin", "xlsx", "h5", "pkl"]
+                    if file_ext == f".{ext}"
+                ),
+                "other",
+            )
 
             files.append(
                 {
                     "filename": filename,
                     "url": f"/{directory}/{filename}",
-                    "mtime": formatted_mtime,  # Formatted modification time
-                    "size": file_stat.st_size,  # File size in bytes
-                    "type": file_type,
+                    "mtime": mtime,  # Unformatted modification time as datetime object
+                    "formatted_mtime": mtime.strftime("%m/%d/%Y %I:%M:%S %p"),  # Formatted modification time
+                    "size": file_stat.st_size,
+                    "type": file_type
                 }
             )
 
@@ -1119,15 +1453,19 @@ def list_files_in_directory(directory):
 
 @app.route("/get_file_list")
 def get_file_list():
-    # List files in both uploads and downloads directories
     upload_files = list_files_in_directory(UPLOAD_FOLDER)
     download_files = list_files_in_directory(DOWNLOAD_FOLDER)
 
     # Combine both lists
     files = upload_files + download_files
 
-    # Sort the combined list by 'mtime' in descending order
+    # Sort the combined list by unformatted 'mtime' in descending order
     files.sort(key=lambda x: x["mtime"], reverse=True)
+
+    # Replace unformatted mtime with formatted mtime for display
+    for file in files:
+        file['mtime'] = file['formatted_mtime']
+        del file['formatted_mtime']
 
     return jsonify(files)
 
@@ -1154,6 +1492,12 @@ def load_json():
     global global_parsed_data
     global_parsed_data.clear()
 
+    socketio.emit(
+        "status",
+        {"message": "File selection changed."},
+        namespace='/'  # Specify the default namespace
+    )
+    
     return jsonify(message="JSON file loaded successfully"), 200
 
 

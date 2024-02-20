@@ -1,88 +1,147 @@
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <title>FENNEC Data Clip Tool</title>
     <script src="{{ url_for('static', filename='papaparse.min.js') }}"></script>
-    <link href="{{ url_for('static', filename='vis-timeline-graph2d.min.css') }}" rel="stylesheet" type="text/css" />
+    <link
+      href="{{ url_for('static', filename='vis-timeline-graph2d.min.css') }}"
+      rel="stylesheet"
+      type="text/css"
+    />
     <script src="{{ url_for('static', filename='vis-timeline-graph2d.min.js') }}"></script>
     <script src="{{ url_for('static', filename='plotly-latest.min.js') }}"></script>
-    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles.css') }}">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap">
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="{{ url_for('static', filename='styles.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap"
+    />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-</head>
+  </head>
 
-<body>
-    <div class="container" id="mainContainer">
-        <div class="loadingMessageStyle" id="loadingMessage" style="display: none;">
-            <div class="centered">
-                <div class="spinner slow"></div>
-                <div class="loadingHeader">
-                    <p class="loadingHeaderText">Converting BIN file to DataFrames</p>
-                </div>
-                <div class="progress-container">
-                    <div id="progressBar" class="progress-bar"></div>
-                </div>
-                <div id="statusQueue" class="status-queue">
-                    <!-- Status messages will be appended here -->
-                </div>
-                <img id="loadingImage" src="https://cdn.discordapp.com/attachments/1099561426059800626/1168592018121961623/IMG_0275.gif" alt="Loading">
-            </div>
-        </div>      
-        <div class="loadingMessageStyle" id="dataLoadingMessage" style="display: none;">
-            <div class="centered">
-                <div class="spinner"></div> <!-- Spinner for loading animation -->
-                <div class="loadingHeader">
-                    <p id="randomMessage">Loading data...</p> <!-- Placeholder for random message -->
-                </div>
-            </div>
-        </div>              
-        <div class="header">
-            <h1 class="header-title">FENNEC Data Clipping Tool</h1>
-            <div class="header-file-info" id="fileInfo">
-                <!-- File info will be populated here -->
-            </div>
-        </div>
-        <div class="flex-container" id="chartcontainer">
-            <div class="flex-item flex-item--3d">
-                <div id="dPlot" class="plot"></div>
-            </div>              
-            <div class="flex-item" style="max-width:500px;">
-                <div class="time-series-container">
-                    <div id="xTimeSeries" class="plot"></div>
-                    <div id="yTimeSeries" class="plot"></div>
-                    <div id="zTimeSeries" class="plot"></div>
-                    <div id="rcouC1TimeSeries" class="plot"></div>
-                    <div id="rcouC2TimeSeries" class="plot"></div>
-                    <div id="rcouC3TimeSeries" class="plot"></div>
-                    <div id="rcouC4TimeSeries" class="plot"></div>
-                    <div id="rcouC8TimeSeries" class="plot"></div>
-                </div>  
-            </div>
-            <div id="fileListContainer">
-                <div id="fileList"></div>
-            </div>
-        </div>
-        <div class="time-display-wrapper">
-            <div class="time-display-container time-display-left">
-                <div id="startTimeDisplay" class="time-display"></div>
-            </div>
-            <div class="time-display-container time-display-right">
-                <div id="endTimeDisplay" class="time-display"></div>
-            </div>
-        </div>
-        <div class="flex-item">
-            <div id="visualization"></div>
-        </div>
-        <div class="button-container">
-            <button class="upload-button" id="uploadBtn">Upload Logs</button>  <!-- New Upload button -->
-            <button onclick="exportData()">Export to XLSX</button>
-            <button onclick="exportData('hdf5')">Export to HDF5</button>
-            <input type="file" id="csvFile" style="display:none;" accept=".bin">
-        </div>
+  <body>
+    <!-- Drag and Drop Overlay -->
+    <div id="dragDropOverlay" class="drag-drop-overlay" style="display: none">
+      <div class="overlay-content">
+        <p>Drag and Drop Your .bin File Here to Upload</p>
+      </div>
     </div>
 
+    <div class="container" id="mainContainer">
+      <div
+        class="loadingMessageStyle"
+        id="loadingMessage"
+        style="display: none"
+      >
+        <div class="centered">
+          <div class="spinner slow"></div>
+          <div class="loadingHeader">
+            <p class="loadingHeaderText">Converting BIN file to DataFrames</p>
+          </div>
+          <div class="progress-container">
+            <div id="progressBar" class="progress-bar"></div>
+          </div>
+          <div id="statusQueue" class="status-queue">
+            <!-- Status messages will be appended here -->
+          </div>
+          <img
+            id="loadingImage"
+            src="https://cdn.discordapp.com/attachments/1099561426059800626/1168592018121961623/IMG_0275.gif"
+            alt="Loading"
+          />
+        </div>
+      </div>
+      <div
+        class="loadingMessageStyle"
+        id="dataLoadingMessage"
+        style="display: none"
+      >
+        <div class="centered">
+          <div class="spinner"></div>
+          <div class="loadingHeader">
+            <p id="randomMessage">Loading data...</p>
+          </div>
+        </div>
+      </div>
+      <div class="header">
+        <h1 class="header-title">FENNEC Data Clipping Tool</h1>
+        <div class="header-file-info" id="fileInfo">
+          <!-- File info will be populated here -->
+        </div>
+      </div>
+      <div class="flex-container" id="chartcontainer">
+        <div class="flex-item flex-item--3d">
+          <div id="dPlot" class="plot"></div>
+        </div>
+        <div class="flex-item" style="max-width: 500px">
+          <div class="time-series-container">
+            <div id="xTimeSeries" class="plot"></div>
+            <div id="yTimeSeries" class="plot"></div>
+            <div id="zTimeSeries" class="plot"></div>
+            <div id="rcouC1TimeSeries" class="plot"></div>
+            <div id="rcouC2TimeSeries" class="plot"></div>
+            <div id="rcouC3TimeSeries" class="plot"></div>
+            <div id="rcouC4TimeSeries" class="plot"></div>
+            <div id="rcouC8TimeSeries" class="plot"></div>
+          </div>
+        </div>
+        <div id="fileListContainer">
+          <div id="fileList"></div>
+        </div>
+      </div>
+      <div class="time-display-wrapper">
+        <div class="time-display-container time-display-left">
+          <div id="startTimeDisplay" class="time-display"></div>
+        </div>
+        <div class="time-display-container time-display-right">
+          <div id="endTimeDisplay" class="time-display"></div>
+        </div>
+      </div>
+      <div class="flex-item">
+        <div id="visualization"></div>
+      </div>
+      <div class="button-container">
+        <button class="upload-button" id="uploadBtn">Upload BIN</button>
+        <button id="showExportModal">Export Data</button>
+      </div>
+    </div>
+
+    <!-- Export Data Modal -->
+    <div id="exportDataModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Export Data</h2>
+          <span class="close-button">×</span>
+        </div>
+        <div class="export-controls">
+          <div class="export-buttons">
+            <!-- Export Buttons -->
+            <button onclick="exportData('excel')">Export to XLSX</button>
+            <button onclick="exportData('hdf5')">Export to HDF5</button>
+            <button onclick="exportData('pkl')">Export to PKL</button>
+          </div>
+          <div class="selection-controls">
+            <div class="select-buttons">
+              <!-- Select All/None Buttons -->
+              <button id="selectAll">Select All</button>
+              <button id="selectNone">Select None</button>
+            </div>
+            <div class="file-types-checkboxes">
+              <!-- Checkboxes will be dynamically generated here -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+
     <!-- JavaScript -->
-    <script src="{{ url_for('static', filename='script_full.js') }}" defer></script>
-    <input type="file" id="csvFile" style="display:none;">
-</body>
+    <script
+      src="{{ url_for('static', filename='script_full.js') }}"
+      defer
+    ></script>
+  </body>
 </html>
