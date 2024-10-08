@@ -31,7 +31,7 @@ These instructions will guide you through the setup process to get the FENNEC Da
 Install the required Python packages by running the following command:
 
 ```sh
-pip install flask flask-cors pandas werkzeug pymavlink requests openpyxl xlsxwriter flask_socketio simplejson pytz tables
+pip install flask flask-cors pandas werkzeug pymavlink requests openpyxl xlsxwriter flask_socketio simplejson pytz tables scipy
 ```
 
 ### Running the Server
